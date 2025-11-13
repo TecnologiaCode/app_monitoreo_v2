@@ -1,0 +1,198 @@
+/**
+ * Estilos personalizados para el Sidebar del Dashboard.
+ * Anula estilos por defecto de Ant Design para coincidir con la paleta de colores
+ * y solucionar problemas de comportamiento del submenú.
+ */
+
+/* === VARIABLES DE COLOR (Opcional, pero recomendado) === */
+:root {
+  --sidebar-bg: #286e86; /* Azul Profundo (Fondo) */
+  --sidebar-text-icon-default: #feac46; /* Naranja Suave (Texto/Icono Normal) */
+  --sidebar-text-icon-hover: #fddcbd; /* Naranja Más Claro (Hover Texto/Icono) */
+  --sidebar-item-selected-bg: #fddcbd; /* Azul Brillante (Fondo Seleccionado - NUEVO) */
+  --sidebar-item-selected-text-icon: #ffffff; /* Blanco (Texto/Icono Seleccionado) */
+  --sidebar-submenu-bg-indent: #145767; /* Fondo indentación submenú */
+  --sidebar-submenu-title-selected-text-icon: #fddcbd; /* Color texto/icono título submenú seleccionado (más claro) */
+  --sidebar-submenu-title-open-hover-bg: rgba(23, 120, 255, 0.1); /* Fondo sutil azul hover/open colapsado */
+}
+
+/* --- Color de Fondo Base del Sidebar --- */
+.ant-layout-sider,
+.ant-menu-dark.ant-menu-inline, /* Menú expandido */
+.ant-menu-dark.ant-menu-vertical { /* Menú colapsado */
+  background-color: var(--sidebar-bg) !important;
+}
+
+/* === ESTILOS PARA ITEMS NORMALES (No submenús) === */
+
+/* --- Estilo por Defecto (Texto e Icono) --- */
+.ant-menu-dark.ant-menu-inline .ant-menu-item,
+.ant-menu-dark.ant-menu-vertical .ant-menu-item { /* Añadido vertical para colapsado */
+  color: var(--sidebar-text-icon-default) !important;
+  font-size: 1rem !important; /* Tamaño de letra base (16px por defecto) */
+  margin-block: 4px !important; /* Espacio vertical entre items */
+  width: calc(100% - 16px) !important; /* Ancho con margen lateral */
+  margin-inline: 8px !important;
+  border-radius: 6px !important;
+}
+.ant-menu-dark .ant-menu-item .ant-menu-icon {
+  font-size: 1.2rem !important; /* Tamaño del icono */
+  color: var(--sidebar-submenu-bg-indent) !important;
+}
+/* Corrección espacio icono-texto en items normales */
+.ant-menu-dark .ant-menu-item .ant-menu-title-content {
+  margin-inline-start: 15px !important; /* Espacio entre icono y texto */
+}
+
+/* --- Estilo HOVER (Texto e Icono) --- */
+.ant-menu-dark.ant-menu-inline .ant-menu-item:hover,
+.ant-menu-dark.ant-menu-vertical .ant-menu-item:hover { /* Añadido vertical */
+  color: var(--sidebar-submenu-bg-indent) !important;
+  background-color: var(--sidebar-item-selected-bg) !important; /* Sin fondo en hover normal */
+}
+.ant-menu-dark .ant-menu-item:hover .ant-menu-icon {
+  color: var(--sidebar-text-icon-hover) !important;
+}
+
+/* --- Estilo SELECCIONADO (Texto, Icono y Fondo) --- */
+.ant-menu-dark .ant-menu-item-selected {
+  background-color: var(--sidebar-item-selected-bg) !important;
+  color: var(--sidebar-submenu-bg-indent) !important;
+}
+.ant-menu-dark .ant-menu-item-selected .ant-menu-icon {
+  color: var(--sidebar-submenu-bg-indent) !important;
+}
+
+/* --- Estilo HOVER sobre SELECCIONADO --- */
+/* (Mantenemos el mismo estilo que seleccionado para evitar parpadeos) */
+.ant-menu-dark .ant-menu-item-selected:hover {
+  background-color: var(--sidebar-item-selected-bg) !important; /* Mantiene fondo */
+  color: var(--sidebar-item-selected-text-icon) !important; /* Mantiene texto */
+}
+.ant-menu-dark .ant-menu-item-selected:hover .ant-menu-icon {
+  color: var(--sidebar-item-selected-text-icon) !important; /* Mantiene icono */
+}
+
+
+/* === ESTILOS PARA SUBMENÚS (ej. "Proyectos") === */
+
+/* --- Título del Submenú (Normal / Expandido) --- */
+.ant-menu-dark.ant-menu-inline .ant-menu-submenu-title {
+  color: var(--sidebar-text-icon-default) !important;
+  font-size: 1rem !important;
+  margin-block: 4px !important;
+  width: calc(100% - 16px) !important;
+  margin-inline: 8px !important;
+  border-radius: 6px !important;
+}
+.ant-menu-dark .ant-menu-submenu-title .ant-menu-item-icon { /* Icono del título */
+  font-size: 1.2rem !important;
+  color: var(--sidebar-text-icon-default) !important;
+}
+/* Corrección espacio icono-texto en título de submenú */
+.ant-menu-dark .ant-menu-submenu-title .ant-menu-title-content {
+  margin-inline-start: 10px !important;
+}
+/* Flecha del submenú */
+.ant-menu-dark .ant-menu-submenu-arrow {
+  color: var(--sidebar-text-icon-default) !important;
+}
+
+/* --- Título del Submenú (HOVER / Expandido) --- */
+.ant-menu-dark.ant-menu-inline .ant-menu-submenu-title:hover {
+  color: var(--sidebar-text-icon-hover) !important;
+  background-color: transparent !important;
+}
+.ant-menu-dark .ant-menu-submenu-title:hover .ant-menu-item-icon,
+.ant-menu-dark .ant-menu-submenu-title:hover .ant-menu-submenu-arrow {
+  color: var(--sidebar-text-icon-hover) !important;
+}
+
+/* --- Título del Submenú (SELECCIONADO / Expandido) --- */
+/* Cuando un hijo está seleccionado */
+.ant-menu-dark.ant-menu-inline .ant-menu-submenu-selected > .ant-menu-submenu-title {
+  background-color: var(--sidebar-item-selected-bg) !important; /* Fondo azul solicitado */
+  color: var(--sidebar-item-selected-text-icon) !important; /* Texto blanco */
+}
+.ant-menu-dark .ant-menu-submenu-selected > .ant-menu-submenu-title .ant-menu-item-icon,
+.ant-menu-dark .ant-menu-submenu-selected > .ant-menu-submenu-title .ant-menu-submenu-arrow {
+  color: var(--sidebar-item-selected-text-icon) !important; /* Icono y flecha blancos */
+}
+
+/* --- Items DENTRO del Submenú (Expandido) --- */
+.ant-menu-dark .ant-menu-sub.ant-menu-inline { /* Fondo indentado */
+  background: var(--sidebar-submenu-bg-indent) !important;
+  border-radius: 0 0 6px 6px; /* Redondeo inferior */
+  margin-inline: 8px !important;
+  width: calc(100% - 16px) !important;
+  padding-bottom: 4px; /* Pequeño espacio inferior */
+}
+/* Estilos base para items hijos (heredan la mayoría) */
+.ant-menu-dark .ant-menu-sub .ant-menu-item {
+  width: calc(100% - 16px) !important; /* Ancho con margen */
+  margin-inline: 8px !important;
+  /* La indentación se controla con padding-left en Antd por defecto,
+     si necesitas más, puedes añadir:
+     padding-left: 48px !important; */
+}
+/* Fondo del item hijo seleccionado */
+.ant-menu-dark .ant-menu-sub .ant-menu-item-selected {
+   background-color: var(--sidebar-item-selected-bg) !important;
+   color: var(--sidebar-item-selected-text-icon) !important;
+}
+.ant-menu-dark .ant-menu-sub .ant-menu-item-selected .ant-menu-icon {
+   color: var(--sidebar-item-selected-text-icon) !important;
+}
+
+
+/* === ESTILOS ESPECÍFICOS PARA MODO COLAPSADO === */
+
+/* --- Título del Submenú (Base / Colapsado) --- */
+/* Asegura centrado y quita estilos no deseados */
+.ant-menu-dark.ant-menu-vertical .ant-menu-submenu > .ant-menu-submenu-title {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  padding: 0 !important;
+  margin: 0 !important; /* Quitamos margen que podría desalinear */
+  height: 40px !important;
+  line-height: 40px !important;
+  width: calc(100% - 16px) !important; /* Ancho con margen */
+  margin-inline: 8px !important;
+  background-color: transparent !important;
+  border-radius: 6px !important; /* Mantenemos redondeo */
+  color: var(--sidebar-text-icon-default) !important; /* Color icono base */
+}
+.ant-menu-dark.ant-menu-vertical .ant-menu-submenu > .ant-menu-submenu-title .ant-menu-item-icon {
+  color: var(--sidebar-text-icon-default) !important;
+  margin: 0 !important; /* Quitamos margen del icono */
+  line-height: inherit !important; /* Asegura centrado vertical */
+}
+/* Ocultamos el contenido de texto y la flecha */
+.ant-menu-dark.ant-menu-vertical .ant-menu-submenu > .ant-menu-submenu-title .ant-menu-title-content,
+.ant-menu-dark.ant-menu-vertical .ant-menu-submenu > .ant-menu-submenu-title .ant-menu-submenu-arrow {
+  display: none !important;
+}
+
+/* --- Título del Submenú (SELECCIONADO / Colapsado) --- */
+/* Cuando un hijo está seleccionado */
+.ant-menu-dark.ant-menu-vertical .ant-menu-submenu-selected > .ant-menu-submenu-title {
+  background-color: transparent !important; /* SIN fondo azul aquí */
+}
+/* El icono sí cambia de color para indicar selección */
+.ant-menu-dark.ant-menu-vertical .ant-menu-submenu-selected > .ant-menu-submenu-title .ant-menu-item-icon {
+  color: var(--sidebar-submenu-title-selected-text-icon) !important; /* Naranja más claro */
+}
+
+/* --- Título del Submenú (HOVER o ABIERTO / Colapsado) --- */
+/* Estilo visual cuando el popover está visible o al hacer hover */
+.ant-menu-dark.ant-menu-vertical .ant-menu-submenu:hover > .ant-menu-submenu-title,
+.ant-menu-dark.ant-menu-vertical li.ant-menu-submenu-open > .ant-menu-submenu-title {
+   background-color: var(--sidebar-submenu-title-open-hover-bg) !important; /* Fondo azul muy sutil */
+   color: var(--sidebar-submenu-title-selected-text-icon) !important; /* Color de texto más claro */
+}
+.ant-menu-dark.ant-menu-vertical .ant-menu-submenu:hover > .ant-menu-submenu-title .ant-menu-item-icon,
+.ant-menu-dark.ant-menu-vertical li.ant-menu-submenu-open > .ant-menu-submenu-title .ant-menu-item-icon {
+   color: var(--sidebar-submenu-title-selected-text-icon) !important; /* Icono más claro */
+}
+

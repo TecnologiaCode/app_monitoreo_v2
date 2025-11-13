@@ -1,0 +1,34 @@
+/*
+  Este archivo anula (override) los estilos por defecto de Ant Design
+  para que coincidan con nuestra paleta de colores.
+*/
+
+/* --- Estilo del Botón Primario --- */
+/*
+  Usamos !important para asegurarnos de que nuestros estilos
+  tengan prioridad sobre los estilos por defecto de Antd.
+*/
+.ant-btn-primary {
+  background-color: #2a8bb6 !important; /* Color primario de acento */
+  border-color: #2a8bb6 !important;
+}
+
+/* --- Estilo Hover del Botón Primario --- */
+.ant-btn-primary:hover,
+.ant-btn-primary:focus {
+  background-color: #286e86 !important; /* Color más oscuro (del sidebar) */
+  border-color: #286e86 !important;
+}
+/*Estilos para el icono de editar*/
+.ant-btn-editar {
+  background-color: #f0ad4e !important; /* Color naranja para editar */
+  border-color: #f0ad4e !important;
+  color: #ffffff !important; /* Texto blanco para contraste */
+}
+
+/*Estilos para el icono de eliminar*/
+.ant-btn-eliminar {
+  background-color: #d9534f !important; /* Color rojo para eliminar */
+  border-color: #d9534f !important;
+  color: #ffffff !important; /* Texto blanco para contraste */
+}
