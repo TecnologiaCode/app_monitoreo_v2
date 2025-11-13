@@ -36,8 +36,10 @@ import { useParams, Link, useNavigate } from 'react-router-dom';
 import { supabase } from '../supabaseClient.js';
 import dayjs from 'dayjs';
 import 'dayjs/locale/es';
+import utc from 'dayjs/plugin/utc';
 import XLSX from 'xlsx-js-style';
 
+dayjs.extend(utc);
 dayjs.locale('es');
 
 const { Title, Text } = Typography;
@@ -51,6 +53,46 @@ const TIPOS_VENTILACION = [
   'Ventilación mecánica',
   'Mixta',
 ];
+
+/* =========================================================
+   Helpers
+   ========================================================= */
+
+/**
+ * MUESTRA la hora local.
+ * Toma un timestamp UTC de la base de datos y lo formatea a la hora local del navegador.
+ * @param {string} v - El timestamp UTC (ej: "2025-11-06T14:30:00+00:00")
+ * @returns {string} - La hora en formato local (ej: "10:30")
+ */
+
+
+const formatHoraUTC = (v) => {
+  if (!v) return '';
+  try {
+    // .local() convierte el timestamp UTC a la zona horaria del navegador
+    return dayjs(v).utc().format('HH:mm');
+  } catch {
+    return String(v);
+  }
+};
+
+/**
+ * MUESTRA la fecha local.
+ * Toma un timestamp UTC de la base de datos y lo formatea a la fecha local del navegador.
+ * @param {string} v - El timestamp UTC
+ * @returns {string} - La fecha en formato local (ej: "06/11/2025")
+ */
+const formatFechaUTC = (v) => {
+  if (!v) return '';
+  try {
+    // .local() convierte el timestamp UTC a la zona horaria del navegador
+    return dayjs(v).utc().format('DD/MM/YYYY');
+  } catch {
+    return String(v);
+  }
+};
+
+
 
 const VentilacionPage = () => {
   const { projectId, monitoreoId: mId, id } = useParams();
@@ -720,6 +762,27 @@ const VentilacionPage = () => {
       width: 60,
       fixed: 'left',
     },
+
+    // Nueva columna Fecha
+                { title: 'FECHA', 
+                  dataIndex: 'measured_at', 
+                  key: 'measured_date', 
+                    // ✅ Permite ordenar ascendente/descendente por fecha
+                  sorter: (a, b) => dayjs(a.measured_at).unix() - dayjs(b.measured_at).unix(),
+                  defaultSortOrder: 'descend',
+                  width: 120, render: (t) => formatFechaUTC(t),
+                },
+            
+                // Columna Hora (se conserva)
+                { title: 'HORA', 
+                  dataIndex: 'measured_at', 
+                  key: 'measured_time', 
+                   // ✅ Permite ordenar ascendente/descendente por hora
+                  sorter: (a, b) => dayjs(a.measured_at).unix() - dayjs(b.measured_at).unix(),
+                  width: 100, 
+                  render: (t) => formatHoraUTC(t),
+                },
+
     {
       title: 'Local de trabajo',
       dataIndex: 'local_trabajo',
