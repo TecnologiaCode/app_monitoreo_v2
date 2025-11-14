@@ -388,7 +388,7 @@ const VentilacionPage = () => {
       )
       .subscribe();
 
-  return () => {
+    return () => {
       supabase.removeChannel(channel);
     };
   }, [monitoreoId, projectId]);
@@ -570,8 +570,8 @@ const VentilacionPage = () => {
         registros.length && registros[0].created_at
           ? dayjs(registros[0].created_at).format('DD/MM/YYYY')
           : proyectoInfo?.created_at
-          ? dayjs(proyectoInfo.created_at).format('DD/MM/YYYY')
-          : '';
+            ? dayjs(proyectoInfo.created_at).format('DD/MM/YYYY')
+            : '';
       const fechaFin = '';
       const equipos =
         Array.isArray(equiposInfo) && equiposInfo.length
@@ -764,24 +764,26 @@ const VentilacionPage = () => {
     },
 
     // Nueva columna Fecha
-                { title: 'FECHA', 
-                  dataIndex: 'measured_at', 
-                  key: 'measured_date', 
-                    // ✅ Permite ordenar ascendente/descendente por fecha
-                  sorter: (a, b) => dayjs(a.measured_at).unix() - dayjs(b.measured_at).unix(),
-                  defaultSortOrder: 'descend',
-                  width: 120, render: (t) => formatFechaUTC(t),
-                },
-            
-                // Columna Hora (se conserva)
-                { title: 'HORA', 
-                  dataIndex: 'measured_at', 
-                  key: 'measured_time', 
-                   // ✅ Permite ordenar ascendente/descendente por hora
-                  sorter: (a, b) => dayjs(a.measured_at).unix() - dayjs(b.measured_at).unix(),
-                  width: 100, 
-                  render: (t) => formatHoraUTC(t),
-                },
+    {
+      title: 'FECHA',
+      dataIndex: 'measured_at',
+      key: 'measured_date',
+      // ✅ Permite ordenar ascendente/descendente por fecha
+      sorter: (a, b) => dayjs(a.measured_at).unix() - dayjs(b.measured_at).unix(),
+      defaultSortOrder: 'descend',
+      width: 120, render: (t) => formatFechaUTC(t),
+    },
+
+    // Columna Hora (se conserva)
+    {
+      title: 'HORA',
+      dataIndex: 'measured_at',
+      key: 'measured_time',
+      // ✅ Permite ordenar ascendente/descendente por hora
+      sorter: (a, b) => dayjs(a.measured_at).unix() - dayjs(b.measured_at).unix(),
+      width: 100,
+      render: (t) => formatHoraUTC(t),
+    },
 
     {
       title: 'Local de trabajo',
@@ -908,8 +910,8 @@ const VentilacionPage = () => {
   const headerFechaInicio = firstRegistro?.created_at
     ? dayjs(firstRegistro.created_at).format('DD/MM/YYYY')
     : proyectoInfo?.created_at
-    ? dayjs(proyectoInfo.created_at).format('DD/MM/YYYY')
-    : 'N/A';
+      ? dayjs(proyectoInfo.created_at).format('DD/MM/YYYY')
+      : 'N/A';
   const headerFechaFin = '';
   const headerEquipos =
     safeEquipos.length > 0
@@ -944,7 +946,7 @@ const VentilacionPage = () => {
           <Title level={2} style={{ color: PRIMARY_BLUE, marginBottom: 0 }}>
             <LineChartOutlined /> Monitoreo de Ventilación
           </Title>
-          
+
           {lastRtMsg && <div style={{ fontSize: 11, color: '#999' }}>Realtime: {lastRtMsg}</div>}
         </Col>
         <Col>
@@ -1012,6 +1014,7 @@ const VentilacionPage = () => {
       <Spin spinning={loading}>
         <div style={{ overflowX: 'auto' }}>
           <Table
+            className="tabla-general" // <--- Clase personalizada para estilos de tabla cabecera fija
             size="small"
             columns={columns}
             dataSource={paginatedRegistros}
@@ -1066,28 +1069,28 @@ const VentilacionPage = () => {
           initialValues={
             selectedRegistro
               ? {
-                  local_trabajo: selectedRegistro.local_trabajo,
-                  tipo_ventilacion: selectedRegistro.tipo_ventilacion,
-                  temperatura_seca_c: selectedRegistro.temperatura_seca_c,
-                  vel_aire_ms: selectedRegistro.vel_aire_ms,
-                  vel_aire_mh: selectedRegistro.vel_aire_mh,
-                  area_ventilacion_m2: selectedRegistro.area_ventilacion_m2,
-                  area_alto_m: selectedRegistro.area_alto_m,
-                  area_ancho_m: selectedRegistro.area_ancho_m,
-                  caudal_m3h: selectedRegistro.caudal_m3h,
-                  vol_largo_m: selectedRegistro.vol_largo_m,
-                  vol_ancho_m: selectedRegistro.vol_ancho_m,
-                  vol_alto_m: selectedRegistro.vol_alto_m,
-                  volumen_m3: selectedRegistro.volumen_m3,
-                  renovaciones_h: selectedRegistro.renovaciones_h,
-                  image_urls: Array.isArray(selectedRegistro.image_urls)
-                    ? selectedRegistro.image_urls.join(', ')
-                    : selectedRegistro.image_urls || '',
-                  location:
-                    typeof selectedRegistro.location === 'object'
-                      ? JSON.stringify(selectedRegistro.location)
-                      : selectedRegistro.location || '',
-                }
+                local_trabajo: selectedRegistro.local_trabajo,
+                tipo_ventilacion: selectedRegistro.tipo_ventilacion,
+                temperatura_seca_c: selectedRegistro.temperatura_seca_c,
+                vel_aire_ms: selectedRegistro.vel_aire_ms,
+                vel_aire_mh: selectedRegistro.vel_aire_mh,
+                area_ventilacion_m2: selectedRegistro.area_ventilacion_m2,
+                area_alto_m: selectedRegistro.area_alto_m,
+                area_ancho_m: selectedRegistro.area_ancho_m,
+                caudal_m3h: selectedRegistro.caudal_m3h,
+                vol_largo_m: selectedRegistro.vol_largo_m,
+                vol_ancho_m: selectedRegistro.vol_ancho_m,
+                vol_alto_m: selectedRegistro.vol_alto_m,
+                volumen_m3: selectedRegistro.volumen_m3,
+                renovaciones_h: selectedRegistro.renovaciones_h,
+                image_urls: Array.isArray(selectedRegistro.image_urls)
+                  ? selectedRegistro.image_urls.join(', ')
+                  : selectedRegistro.image_urls || '',
+                location:
+                  typeof selectedRegistro.location === 'object'
+                    ? JSON.stringify(selectedRegistro.location)
+                    : selectedRegistro.location || '',
+              }
               : {}
           }
           preserve={false}
@@ -1188,26 +1191,26 @@ const VentilacionPage = () => {
         footer={
           imageViewerList.length > 1
             ? [
-                <Button
-                  key="prev"
-                  onClick={() =>
-                    setImageViewerIndex(
-                      (prev) => (prev - 1 + imageViewerList.length) % imageViewerList.length
-                    )
-                  }
-                >
-                  Anterior
-                </Button>,
-                <Button
-                  key="next"
-                  type="primary"
-                  onClick={() =>
-                    setImageViewerIndex((prev) => (prev + 1) % imageViewerList.length)
-                  }
-                >
-                  Siguiente
-                </Button>,
-              ]
+              <Button
+                key="prev"
+                onClick={() =>
+                  setImageViewerIndex(
+                    (prev) => (prev - 1 + imageViewerList.length) % imageViewerList.length
+                  )
+                }
+              >
+                Anterior
+              </Button>,
+              <Button
+                key="next"
+                type="primary"
+                onClick={() =>
+                  setImageViewerIndex((prev) => (prev + 1) % imageViewerList.length)
+                }
+              >
+                Siguiente
+              </Button>,
+            ]
             : null
         }
         width={720}

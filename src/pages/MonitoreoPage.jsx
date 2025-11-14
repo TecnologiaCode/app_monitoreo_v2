@@ -457,7 +457,7 @@ useEffect(() => {
       key: 'tipo_monitoreo',
       sorter: (a, b) => a.tipo_monitoreo.localeCompare(b.tipo_monitoreo),
       fixed: isMobile ? 'left' : false,
-      width: 180
+      width: 150
     },
     {
       title: 'Descripción',
@@ -508,7 +508,7 @@ useEffect(() => {
       dataIndex: 'puntos',
       key: 'puntos_dinamicos',
       sorter: (a, b) => a.puntos - b.puntos,
-      width: 150,
+      width: 210,
       responsive: ['lg'],
       render: (totalPuntos, record) => {
         const realizados = medicionCounts[record.id] ?? 0;
@@ -623,6 +623,7 @@ useEffect(() => {
       ) : (
         <div style={{ overflowX: 'auto' }}>
           <Table
+            className="tabla-general" // <--- Clase personalizada para estilos de tabla cabecera fija
             columns={columns}
             dataSource={filteredData}
             scroll={{ x: true }}

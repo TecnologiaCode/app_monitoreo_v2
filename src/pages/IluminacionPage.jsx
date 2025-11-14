@@ -61,6 +61,45 @@ const calculateAverage = (lecturas) => {
   return (sum / lecturas.length).toFixed(1);
 };
 
+/* =========================================================
+   Helpers
+   ========================================================= */
+
+/**
+ * MUESTRA la hora local.
+ * Toma un timestamp UTC de la base de datos y lo formatea a la hora local del navegador.
+ * @param {string} v - El timestamp UTC (ej: "2025-11-06T14:30:00+00:00")
+ * @returns {string} - La hora en formato local (ej: "10:30")
+ */
+
+
+const formatHoraUTC = (v) => {
+  if (!v) return '';
+  try {
+    // .local() convierte el timestamp UTC a la zona horaria del navegador
+    return dayjs(v).utc().format('HH:mm');
+  } catch {
+    return String(v);
+  }
+};
+
+/**
+ * MUESTRA la fecha local.
+ * Toma un timestamp UTC de la base de datos y lo formatea a la fecha local del navegador.
+ * @param {string} v - El timestamp UTC
+ * @returns {string} - La fecha en formato local (ej: "06/11/2025")
+ */
+const formatFechaUTC = (v) => {
+  if (!v) return '';
+  try {
+    // .local() convierte el timestamp UTC a la zona horaria del navegador
+    return dayjs(v).utc().format('DD/MM/YYYY');
+  } catch {
+    return String(v);
+  }
+};
+
+
 const IluminacionPage = () => {
   const { projectId, monitoreoId: mId, id } = useParams();
   const monitoreoId = mId || id;
@@ -746,22 +785,45 @@ const IluminacionPage = () => {
     {
       title: 'N°',
       key: 'numero',
-      width: 60,
+      width: 40,
       render: (_, __, i) => (currentPage - 1) * pageSize + i + 1,
     },
+
+    // Nueva columna Fecha
+        {
+          title: 'FECHA',
+          dataIndex: 'measured_at',
+          key: 'measured_date',
+          // ✅ Permite ordenar ascendente/descendente por fecha
+          sorter: (a, b) => dayjs(a.measured_at).unix() - dayjs(b.measured_at).unix(),
+          defaultSortOrder: 'descend',
+          width:90, render: (t) => formatFechaUTC(t),
+        },
+    
+        // Columna Hora (se conserva)
+        {
+          title: 'HORA',
+          dataIndex: 'measured_at',
+          key: 'measured_time',
+          // ✅ Permite ordenar ascendente/descendente por hora
+          sorter: (a, b) => dayjs(a.measured_at).unix() - dayjs(b.measured_at).unix(),
+          width: 90,
+          render: (t) => formatHoraUTC(t),
+        },
+
     {
       title: 'Área',
       dataIndex: 'area',
       key: 'area',
       ellipsis: true,
-      width: 140,
+      width: 130,
     },
     {
       title: 'Puesto de Trabajo',
       dataIndex: 'puesto_trabajo',
       key: 'puesto_trabajo',
       ellipsis: true,
-      width: 170,
+      width: 150,
     },
     {
       title: 'Punto de Medición',
@@ -770,36 +832,25 @@ const IluminacionPage = () => {
       ellipsis: true,
       width: 140,
     },
-    {
-      title: 'Fecha de medición',
-      dataIndex: 'fecha_medicion',
-      key: 'fecha_medicion',
-      width: 130,
-    },
-    {
-      title: 'Hora de medición',
-      dataIndex: 'hora_medicion',
-      key: 'hora_medicion',
-      width: 120,
-    },
+   
     {
       title: 'Tipo Iluminación',
       dataIndex: 'tipo_iluminacion',
       key: 'tipo_iluminacion',
       ellipsis: true,
-      width: 150,
+      width: 125,
     },
     {
       title: 'Nivel Requerido (LUX)',
       dataIndex: 'nivel_requerido',
       key: 'nivel_requerido',
-      width: 140,
+      width: 120,
     },
     {
       title: 'Mediciones (LUX)',
       dataIndex: 'lecturas',
       key: 'lecturas',
-      width: 180,
+      width: 150,
       render: (lecturas) => {
         const data = Array.isArray(lecturas) ? lecturas : [];
         if (!data.length) return <Tag>Sin lecturas</Tag>;
@@ -847,7 +898,7 @@ const IluminacionPage = () => {
       title: 'Ubicación',
       dataIndex: 'location',
       key: 'location',
-      width: 180,
+      width: 280,
       render: (v) => renderLocation(v),
     },
     {
@@ -861,7 +912,7 @@ const IluminacionPage = () => {
       title: 'Registrado por',
       dataIndex: 'created_by',
       key: 'created_by',
-      width: 190,
+      width: 110,
       fixed: 'right', // <- la dejamos inmóvil
       render: (v) => {
         if (!v) return <Text type="secondary">N/A</Text>;
@@ -872,7 +923,7 @@ const IluminacionPage = () => {
     {
       title: 'Acciones',
       key: 'acciones',
-      width: 120,
+      width: 100,
       fixed: 'right', // <- y también acciones
       render: (_, record) => (
         <Space size="small">
@@ -1026,6 +1077,7 @@ const IluminacionPage = () => {
         {/* importante: la tabla ya tiene scroll.x, ahora las columnas fijas sí funcionan */}
         <div style={{ overflowX: 'auto' }}>
           <Table
+            lassName="tabla-general" // <--- Clase personalizada para estilos de tabla cabecera fija
             size="small"
             columns={columns}
             dataSource={paginatedMediciones}
@@ -1280,4 +1332,4 @@ const IluminacionPage = () => {
   );
 };
 
-export default IluminacionPage;
+export default IluminacionPage; // SUBIDO EN FECHA 14/11/2025 HRS. 10:11

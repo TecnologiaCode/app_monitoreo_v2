@@ -81,10 +81,33 @@ button:focus-visible {
   }
 }
 
-/* Esto modifica el tamaño de letra y el relleno (padding) de la cabecera */
+/* Cabecera compacta + separadores verticales visibles */
 .tabla-general .ant-table-thead > tr > th {
-    font-size: 14px !important;      /* Tamaño de letra */
-    padding: 2px 5px !important;    /* Alto (12px arriba/abajo) y Ancho (8px lados) */
-    background-color: #f0f0f0;       /* Color de fondo (opcional) */
-    height: 20px;                    /* Forzar una altura específica si quieres */
+  font-size: 14px !important;
+  padding: 2px 6px !important;
+  height: 22px;                 /* compacta, pero suficiente para los iconos de orden */
+  background: #f5f5f5;          /* leve contraste */
+  border-bottom: 1px solid #d9d9d9;     /* línea inferior de cabecera */
+  /*border-right: 1px solid #e5e7eb;      /* <<< NUEVO: separador vertical */
+  position: relative;                    /* para pseudo-elemento opcional */
+  line-height: 1.2;
+}
+
+
+
+/* Opcional: resalta aún más las divisiones de cabecera con una línea “fina” */
+.tabla-general .ant-table-thead > tr > th:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  top: 6px;
+  bottom: 6px;
+  right: 0;
+  width: 0;
+  border-right: 1px solid #dcdfe3;        /* tono un poco más fuerte */
+  pointer-events: none;
+}
+
+/* Opcional: mejora contraste al hacer hover sobre cabecera */
+.tabla-general .ant-table-thead > tr > th:hover {
+  background: #efefef;
 }

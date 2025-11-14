@@ -693,14 +693,14 @@ const EstresCalorPage = () => {
       key: 'measured_time', 
        // ✅ Permite ordenar ascendente/descendente por hora
       sorter: (a, b) => dayjs(a.measured_at).unix() - dayjs(b.measured_at).unix(),
-      width: 100, 
+      width: 90, 
       render: (t) => formatHoraUTC(t),
     },
     
     { title: 'PUESTO DE TRABAJO', 
       dataIndex: 'puesto_trabajo', 
       key: 'puesto_trabajo', 
-      width: 150, 
+      width: 90, 
       ellipsis: true 
     },
     
