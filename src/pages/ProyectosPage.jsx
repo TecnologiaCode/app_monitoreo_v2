@@ -271,7 +271,7 @@ const columns = [
       title: 'Monitoreos',
       key: 'monitorCount',
       dataIndex: 'id',
-      width: 110,
+      width: 90,
       align: 'center',
       sorter: (a, b) => (monitorCounts[a.id]?.countMonitoreos ?? 0) - (monitorCounts[b.id]?.countMonitoreos ?? 0),
       render: (projectId) => {
@@ -291,7 +291,7 @@ const columns = [
         title: 'Puntos (Total)',
         key: 'puntos_avance',
         dataIndex: 'id',
-        width: 140,
+        width: 110,
         align: 'center',
         render: (projectId) => {
             if (loadingCounts) return <Spin size="small" />;
@@ -322,7 +322,7 @@ const columns = [
         title: 'Avance General',
         key: 'porcentaje_general',
         dataIndex: 'id',
-        width: 160,
+        width: 210,
         render: (projectId) => {
             if (loadingCounts) return <Spin size="small" />;
             
@@ -350,7 +350,7 @@ const columns = [
       title: 'Estado',
       dataIndex: 'estado',
       key: 'estado',
-      width: 120,
+      width: 90,
       sorter: (a, b) => (a.estado || '').localeCompare(b.estado || ''),
       render: (estado) => {
         let color;
@@ -382,8 +382,8 @@ const columns = [
       title: 'Acciones',
       key: 'acciones',
       align: 'right',
-      fixed: isMobile ? 'right' : false,
-      width: 170,
+      fixed: 'right',
+      width: 150,
       render: (_, record) => (
         <Space size="small">
           <Tooltip title="Ver Detalles">
@@ -612,9 +612,11 @@ const columns = [
       ) : (
         <div style={{ overflowX: 'auto' }}>
           <Table
+            className='tabla-general'
             columns={columns}
             dataSource={filteredData}
-            scroll={{ x: true }}
+            scroll={{ x: 'max-content' }}   // <-- NUEVO: habilita ancho por columnas
+            tableLayout="fixed"             // <-- NUEVO: respeta los width/minWidth
             pagination={{ pageSize: pageSize }}
             rowKey="id"
           />

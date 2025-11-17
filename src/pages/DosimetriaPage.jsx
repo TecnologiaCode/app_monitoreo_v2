@@ -531,7 +531,9 @@ const DosimetriaPage = () => {
                 </Col>
                 <Col>
                     <Space>
-                        <Button onClick={() => navigate(`/proyectos/${projectId}/monitoreo`)}><ArrowLeftOutlined /> Volver</Button>
+                        <Button onClick={() => navigate(`/proyectos/${projectId}/monitoreo`)}>
+                            <ArrowLeftOutlined /> Volver a Monitoreos
+                        </Button>
                         <Button icon={<FileExcelOutlined />} onClick={() => exportToExcel(rows, headerInfo, usersById)} loading={loading}>Exportar</Button>
                         <Button type="primary" icon={<PlusOutlined />} onClick={handleAdd}>Agregar</Button>
                     </Space>

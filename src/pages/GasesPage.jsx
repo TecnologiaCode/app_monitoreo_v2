@@ -942,7 +942,7 @@ const compressImage = (url) => {
         <Col>
           <Space>
             <Button onClick={() => navigate(`/proyectos/${projectId}/monitoreo`)}>
-              <ArrowLeftOutlined /> Volver
+              <ArrowLeftOutlined /> Volver a Monitoreo
             </Button>
             <Button icon={<FileExcelOutlined />} onClick={() => exportToExcel(registros, empresa)}>
               Exportar a Excel

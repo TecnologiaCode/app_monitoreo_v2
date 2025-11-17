@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-
+// src/pages/PerfilPage.jsx
+import React, { useState, useEffect } from 'react'; // CAMBIO: agrego useEffect
 import { 
   Card, 
   Avatar, 
@@ -11,22 +11,24 @@ import {
   Typography
 } from 'antd';
 import { UserOutlined, UploadOutlined, EditOutlined } from '@ant-design/icons';
+// NUEVO: importar supabase client
+import { supabase } from '../supabaseClient'; // NUEVO
 
 // Color Azul Primario para acentos y encabezados: #2a8bb6
 const PRIMARY_BLUE = '#2a8bb6';
 
 const { Title } = Typography;
 
-// --- Simulación de carga de imagen ---
-// Esta función previene la subida real y en su lugar
-// lee el archivo como un base64 para mostrar la vista previa.
+// --- (OPCIONAL) Utilidad para vista previa base64 ---
+// La dejamos por si quieres previsualizar sin subir, pero en el flujo real
+// mostraremos la URL pública devuelta por Supabase.
 const getBase64 = (img, callback) => {
   const reader = new FileReader();
   reader.addEventListener('load', () => callback(reader.result));
   reader.readAsDataURL(img);
 };
 
-// Esta función verifica que el archivo sea una imagen
+// Validación del archivo (igual que tu versión)
 const beforeUpload = (file) => {
   const isJpgOrPng = file.type === 'image/jpeg' || file.type === 'image/png';
   if (!isJpgOrPng) {
@@ -38,39 +40,143 @@ const beforeUpload = (file) => {
   }
   return isJpgOrPng && isLt2M;
 };
-// --- Fin de simulación ---
-
 
 const PerfilPage = () => {
-  // Estado para guardar la URL de la imagen (usamos base64 para la simulación)
-  const [imageUrl, setImageUrl] = useState(null);
-  // Estado para el formulario
+  const [imageUrl, setImageUrl] = useState(null);             // mantiene URL actual del avatar (pública)
   const [form] = Form.useForm();
+  const [userId, setUserId] = useState(null);                 // NUEVO: id del usuario logueado
+  const [loading, setLoading] = useState(true);               // NUEVO: loading inicial
+  const [uploading, setUploading] = useState(false);          // NUEVO: estado de subida
+  const [fileList, setFileList] = useState([]);               // NUEVO: control Upload antd
 
-  // Datos iniciales del usuario (simulados)
-  const userData = {
-    nombre: 'Admin (Bolivia)',
-    email: 'admin@monitoreo.bo',
+  // CAMBIO: quitamos datos simulados y cargamos datos REALES desde Supabase
+  useEffect(() => {
+    (async () => {
+      try {
+        const { data: { user }, error: userErr } = await supabase.auth.getUser(); // NUEVO
+        if (userErr) throw userErr;
+        if (!user) {
+          message.error('No hay sesión activa.');
+          setLoading(false);
+          return;
+        }
+        setUserId(user.id);
+
+        // Busca nombre_completo y avatar_url en profiles
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('nombre_completo, avatar_url, email') // si tienes email guardado en profiles
+          .eq('id', user.id)
+          .single();
+        if (error) throw error;
+
+        // Pre-carga del formulario
+        form.setFieldsValue({
+          // CAMBIO: usamos nombre_completo (tu columna real)
+          nombre_completo: data?.nombre_completo || '',
+          // Si no guardas email en profiles, puedes mostrar el del auth:
+          email: data?.email || user.email || ''
+        });
+
+        // Avatar actual
+        if (data?.avatar_url) {
+          setImageUrl(data.avatar_url);
+          setFileList([{
+            uid: '1',
+            name: 'avatar.png',
+            status: 'done',
+            url: data.avatar_url
+          }]);
+        }
+      } catch (e) {
+        console.error(e);
+        message.error('No se pudo cargar tu perfil.');
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [form]);
+
+  // CAMBIO: ahora onFinish guarda en la tabla profiles (nombre + avatar_url)
+  const onFinish = async (values) => {
+    if (!userId) return;
+    try {
+      const payload = {
+        nombre_completo: values.nombre_completo, // CAMBIO: guarda columna real
+        avatar_url: imageUrl || null,
+        // Si quieres guardar email en profiles, descomenta:
+        // email: values.email
+      };
+      const { error } = await supabase
+        .from('profiles')
+        .update(payload)
+        .eq('id', userId);
+      if (error) throw error;
+
+      message.success('¡Perfil actualizado exitosamente!');
+    } catch (e) {
+      console.error(e);
+      message.error('No se pudieron guardar los cambios.');
+    }
   };
 
-  // Manejador para cuando el formulario se envía
-  const onFinish = (values) => {
-    console.log('Datos guardados:', values);
-    message.success('¡Perfil actualizado exitosamente!');
+  // CAMBIO: ahora subimos a Supabase Storage en vez de simular
+  const handleUploadChange = async (info) => {
+    // Antd manda muchos estados; manejamos only on file selected
+    if (info.file.status === 'uploading') return;
+
+    if (info.file.status === 'done' || info.file.status === 'error') {
+      // Subimos manualmente a Supabase usando customRequest
+      // (El customRequest ya llama a esta función; aquí solo mantenemos coherencia de UI)
+    }
   };
 
-  // Manejador para el cambio en el componente Upload
-  const handleUploadChange = (info) => {
-    if (info.file.status === 'uploading') {
-      // Podríamos mostrar un 'loading' aquí si quisiéramos
+  // NUEVO: función para customRequest que sube a Storage
+  const uploadToSupabase = async ({ file, onSuccess, onError }) => {
+    if (!userId) {
+      onError?.(new Error('Usuario no disponible'));
       return;
     }
-    if (info.file.status === 'done' || info.file.status === 'error') {
-      // (Simulación) Obtenemos el base64 de la imagen seleccionada
-      getBase64(info.file.originFileObj, (url) => {
-        setImageUrl(url);
-        message.success(`${info.file.name} subido exitosamente.`);
-      });
+    setUploading(true);
+    try {
+      const ext = file.name.split('.').pop();
+      const filePath = `u_${userId}/${Date.now()}.${ext}`;
+
+      // Subir archivo
+      const { error: upErr } = await supabase
+        .storage
+        .from('avatars')
+        .upload(filePath, file, {
+          cacheControl: '3600',
+          upsert: true
+        });
+      if (upErr) throw upErr;
+
+      // Obtener URL pública (bucket público)
+      const { data: publicData } = supabase.storage
+        .from('avatars')
+        .getPublicUrl(filePath);
+
+      const publicUrl = publicData?.publicUrl;
+      if (!publicUrl) throw new Error('No se obtuvo URL pública.');
+
+      // Actualizar estado UI
+      setImageUrl(publicUrl);
+      setFileList([{
+        uid: file.uid || String(Date.now()),
+        name: file.name,
+        status: 'done',
+        url: publicUrl
+      }]);
+
+      message.success('Imagen subida.');
+      onSuccess?.('ok');
+    } catch (e) {
+      console.error(e);
+      message.error('Error al subir la imagen.');
+      onError?.(e);
+    } finally {
+      setUploading(false);
     }
   };
 
@@ -83,23 +189,22 @@ const PerfilPage = () => {
         <Avatar 
           size={128} 
           icon={<UserOutlined />} 
-          src={imageUrl} 
+          src={imageUrl || undefined} // CAMBIO: ahora viene de Supabase/public URL
         />
         
         {/* Componente de subida de Ant Design */}
         <Upload
           name="avatar"
-          showUploadList={false} // No mostramos la lista de archivos
-          // Usamos 'beforeUpload' para validar Y simular la subida
-          // En una app real, 'action' apuntaría a tu API de subida
-          // action="https://660d2bd96ddfa2943b33731c.mockapi.io/api/v1/upload" 
-          beforeUpload={beforeUpload} 
+          showUploadList={false}
+          beforeUpload={beforeUpload}
           onChange={handleUploadChange}
-          // Hacemos que la subida se active al seleccionar (no se sube realmente)
-          customRequest={({ onSuccess }) => onSuccess("ok")} 
+          // CAMBIO: ahora usamos subida REAL a Supabase
+          customRequest={uploadToSupabase} // CAMBIO
+          accept="image/*"
+          disabled={uploading || loading}
         >
-          <Button icon={<UploadOutlined />} style={{ marginTop: 16 }}>
-            Cambiar Foto de Perfil
+          <Button icon={<UploadOutlined />} style={{ marginTop: 16 }} loading={uploading}>
+            {uploading ? 'Subiendo...' : 'Cambiar Foto de Perfil'}
           </Button>
         </Upload>
       </div>
@@ -107,17 +212,19 @@ const PerfilPage = () => {
       <Form
         form={form}
         layout="vertical"
-        initialValues={userData} // Precargamos el formulario
         onFinish={onFinish}
+        disabled={loading}
       >
+        {/* CAMBIO: nombre_completo (columna real) */}
         <Form.Item
-          name="nombre"
+          name="nombre_completo"
           label="Nombre Completo"
           rules={[{ required: true, message: 'Por favor ingresa tu nombre' }]}
         >
           <Input prefix={<UserOutlined />} placeholder="Nombre Completo" />
         </Form.Item>
         
+        {/* Puedes dejar email editable o solo lectura; aquí editable */}
         <Form.Item
           name="email"
           label="Correo Electrónico"

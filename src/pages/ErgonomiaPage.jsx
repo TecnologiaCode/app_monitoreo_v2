@@ -77,13 +77,13 @@ const MANO_AGARRE_OPTIONS = ['Derecha', 'Izquierda', 'Ambas'];
 
 
 const formatHoraUTC = (v) => {
-  if (!v) return '';
-  try {
-    // .local() convierte el timestamp UTC a la zona horaria del navegador
-    return dayjs(v).utc().format('HH:mm');
-  } catch {
-    return String(v);
-  }
+    if (!v) return '';
+    try {
+        // .local() convierte el timestamp UTC a la zona horaria del navegador
+        return dayjs(v).utc().format('HH:mm');
+    } catch {
+        return String(v);
+    }
 };
 
 /**
@@ -93,13 +93,13 @@ const formatHoraUTC = (v) => {
  * @returns {string} - La fecha en formato local (ej: "06/11/2025")
  */
 const formatFechaUTC = (v) => {
-  if (!v) return '';
-  try {
-    // .local() convierte el timestamp UTC a la zona horaria del navegador
-    return dayjs(v).utc().format('DD/MM/YYYY');
-  } catch {
-    return String(v);
-  }
+    if (!v) return '';
+    try {
+        // .local() convierte el timestamp UTC a la zona horaria del navegador
+        return dayjs(v).utc().format('DD/MM/YYYY');
+    } catch {
+        return String(v);
+    }
 };
 
 
@@ -118,7 +118,7 @@ const ErgonomiaPage = () => {
         modelos: '',
         series: '',
     });
-    
+
     const [rows, setRows] = useState([]);
     const [usersById, setUsersById] = useState({});
 
@@ -358,12 +358,12 @@ const ErgonomiaPage = () => {
                     let ids = m.equipos_asignados;
                     if (typeof ids === 'string') { try { ids = JSON.parse(ids); } catch { ids = []; } }
                     if (Array.isArray(ids) && ids.length) {
-                        const { data: eq } = await supabase .from('equipos') .select('id, nombre_equipo, modelo, serie') .in('id', ids);
+                        const { data: eq } = await supabase.from('equipos').select('id, nombre_equipo, modelo, serie').in('id', ids);
                         equipos = eq || [];
                     }
                     setHeaderInfo((h) => ({ ...h, empresa: p?.nombre || '—', fecha: p?.created_at ? dayjs(p.created_at).format('DD/MM/YYYY') : '—', equipo: equipos.length ? equipos.map(e => e.nombre_equipo || 's/n').join(', ') : '', modelos: equipos.length ? equipos.map(e => e.modelo || 's/n').join(', ') : '', series: equipos.length ? equipos.map(e => e.serie || 's/n').join(', ') : '', }));
                 } else if (projectId) {
-                    const { data: p } = await supabase .from('proyectos') .select('id, nombre, created_at') .eq('id', projectId) .single();
+                    const { data: p } = await supabase.from('proyectos').select('id, nombre, created_at').eq('id', projectId).single();
                     setHeaderInfo((h) => ({ ...h, empresa: p?.nombre || '—', fecha: p?.created_at ? dayjs(p.created_at).format('DD/MM/YYYY') : '—', }));
                 }
             } catch (e) { console.error('Header error:', e); } finally { setLoadingHeader(false); }
@@ -389,7 +389,7 @@ const ErgonomiaPage = () => {
                 else if (typeof r.image_urls === 'string' && r.image_urls.trim() !== '') {
                     imageUrls = r.image_urls.split(',').map((s) => s.trim());
                 }
-                
+
                 return {
                     ...r,
                     descripcion: r.actividades || '',
@@ -408,14 +408,14 @@ const ErgonomiaPage = () => {
 
             const ids = Array.from(new Set(mapped.map(m => m.created_by).filter(Boolean)));
             if (ids.length) {
-                const { data: profs } = await supabase .from('profiles') .select('id, username, nombre_completo, email, descripcion, rol, estado') .in('id', ids);
+                const { data: profs } = await supabase.from('profiles').select('id, username, nombre_completo, email, descripcion, rol, estado').in('id', ids);
                 const dict = {};
                 (profs || []).forEach((u) => { const display = (u.nombre_completo && u.nombre_completo.trim()) || (u.username && u.username.trim()) || u.id; dict[u.id] = display; });
                 setUsersById(dict);
             } else {
                 setUsersById({});
             }
-        } catch (e) { console.error('Fetch error:', e); message.error('No se pudo cargar Ergonomía.'); setRows([]); } 
+        } catch (e) { console.error('Fetch error:', e); message.error('No se pudo cargar Ergonomía.'); setRows([]); }
         finally { setLoading(false); }
     };
 
@@ -433,29 +433,29 @@ const ErgonomiaPage = () => {
     /* ---------- CRUD ---------- */
     const handleAdd = () => { setSelected(null); setIsFormOpen(true); };
     const handleEdit = (rec) => { setSelected(rec); setIsFormOpen(true); };
-    const handleDelete = (rec) => { 
-        Modal.confirm({ 
-            title: '¿Eliminar registro?', 
-            icon: <ExclamationCircleOutlined />, 
-            content: `Se eliminará el registro de "${rec.trabajador_nombre}"`, 
-            okText: 'Eliminar', 
-            okType: 'danger', 
-            cancelText: 'Cancelar', onOk: async () => { 
-                try { 
+    const handleDelete = (rec) => {
+        Modal.confirm({
+            title: '¿Eliminar registro?',
+            icon: <ExclamationCircleOutlined />,
+            content: `Se eliminará el registro de "${rec.trabajador_nombre}"`,
+            okText: 'Eliminar',
+            okType: 'danger',
+            cancelText: 'Cancelar', onOk: async () => {
+                try {
                     //const { error } = await supabase.from(MEDICIONES_TABLE_NAME).delete().eq('id', rec.id); 
                     //if (error) throw error; message.success('Eliminado.'); 
                     // USAMOS 'setRows' PORQUE ASI SE LLAMA TU VARIABLE
                     setRows((prevRows) => prevRows.filter((item) => item.id !== rec.id));
-                    message.success('Registro eliminado.');    
-                } catch (e) { 
-                    message.error('No se pudo eliminar.'); 
-                } 
-            } 
-        }); 
+                    message.success('Registro eliminado.');
+                } catch (e) {
+                    message.error('No se pudo eliminar.');
+                }
+            }
+        });
     };
-    
-        const onOkForm = () => (selected ? doEdit() : doAdd());
-        const onCancelForm = () => setIsFormOpen(false);
+
+    const onOkForm = () => (selected ? doEdit() : doAdd());
+    const onCancelForm = () => setIsFormOpen(false);
 
     // 3) Hora: guardar en LOCAL con offset (sin toISOString) para evitar -4h
     const payloadFromValues = async (values) => {
@@ -504,11 +504,11 @@ const ErgonomiaPage = () => {
             image_urls: imageUrls,
             location: values.location || null,
         };
-        
+
         if (created_by && !selected) {
             payload.created_by = created_by;
         }
-        
+
         return payload;
     };
 
@@ -567,49 +567,51 @@ const ErgonomiaPage = () => {
 
     /* ========================= COLUMNAS TABLA (MODIFICADO) ========================= */
     const columns = [
-        { 
-            title: 'N°', 
-            key: 'n', 
-            width: 60, 
-            fixed: 'left', render: (_, __, i) => (currentPage - 1) * pageSize + i + 1, 
+        {
+            title: 'N°',
+            key: 'n',
+            width: 40,
+            fixed: 'left', render: (_, __, i) => (currentPage - 1) * pageSize + i + 1,
         },
 
-         // Nueva columna Fecha
-            { title: 'FECHA', 
-              dataIndex: 'measured_at', 
-              key: 'measured_date', 
-                // ✅ Permite ordenar ascendente/descendente por fecha
-              sorter: (a, b) => dayjs(a.measured_at).unix() - dayjs(b.measured_at).unix(),
-              defaultSortOrder: 'descend',
-              width: 120, render: (t) => formatFechaUTC(t),
-            },
-        
-            // Columna Hora (se conserva)
-            { title: 'HORA', 
-              dataIndex: 'measured_at', 
-              key: 'measured_time', 
-               // ✅ Permite ordenar ascendente/descendente por hora
-              sorter: (a, b) => dayjs(a.measured_at).unix() - dayjs(b.measured_at).unix(),
-              width: 100, 
-              render: (t) => formatHoraUTC(t),
-            },
-            
-        
-        { 
-            title: 'Área de Trabajo', 
-            dataIndex: 'area_trabajo', 
-            key: 'area_trabajo', 
-            width: 150, 
-            ellipsis: true 
+        // Nueva columna Fecha
+        {
+            title: 'FECHA',
+            dataIndex: 'measured_at',
+            key: 'measured_date',
+            // ✅ Permite ordenar ascendente/descendente por fecha
+            sorter: (a, b) => dayjs(a.measured_at).unix() - dayjs(b.measured_at).unix(),
+            defaultSortOrder: 'descend',
+            width: 100, render: (t) => formatFechaUTC(t),
         },
-        { 
-            title: 'Nombre del Trabajador', 
-            dataIndex: 'trabajador_nombre', 
-            key: 'trabajador_nombre', 
-            width: 200, 
-            ellipsis: true 
+
+        // Columna Hora (se conserva)
+        {
+            title: 'HORA',
+            dataIndex: 'measured_at',
+            key: 'measured_time',
+            // ✅ Permite ordenar ascendente/descendente por hora
+            sorter: (a, b) => dayjs(a.measured_at).unix() - dayjs(b.measured_at).unix(),
+            width: 70,
+            render: (t) => formatHoraUTC(t),
         },
-        
+
+
+        {
+            title: 'Área de Trabajo',
+            dataIndex: 'area_trabajo',
+            key: 'area_trabajo',
+            width: 150,
+            ellipsis: true
+        },
+        {
+            title: 'Nombre del Trabajador',
+            dataIndex: 'trabajador_nombre',
+            key: 'trabajador_nombre',
+            width: 200,
+            ellipsis: true
+        },
+
         { title: 'Edad', dataIndex: 'edad', key: 'edad', width: 80 },
         { title: 'Turno', dataIndex: 'turno', key: 'turno', width: 100, ellipsis: true },
         { title: 'Dolencias', dataIndex: 'dolencias', key: 'dolencias', width: 200, ellipsis: true },
@@ -627,23 +629,23 @@ const ErgonomiaPage = () => {
         { title: 'Carga: Distancia (m)', dataIndex: 'carga_distancia_m', key: 'carga_distancia_m', width: 100 },
         { title: 'Carga: Ayuda', dataIndex: 'carga_ayuda', key: 'carga_ayuda', width: 150, ellipsis: true },
         { title: 'Carga: Descripción', dataIndex: 'carga_descripcion', key: 'carga_descripcion', width: 250, ellipsis: true },
-        { title: 'Imágenes', dataIndex: 'image_urls', key: 'image_urls', width: 120, render: (imgs) => { const list = Array.isArray(imgs) ? imgs : []; if (!list.length) return <Text type="secondary">Ninguna</Text>; return ( <Button type="link" icon={<EyeOutlined />} onClick={() => openImageViewer(list, 0)} size="small" > Ver imagen </Button> ); }, },
-        { title: 'Ubicación', dataIndex: 'location', key: 'location', width: 180, render: (v) => renderLocation(v), },
+        { title: 'Imágenes', dataIndex: 'image_urls', key: 'image_urls', width: 120, render: (imgs) => { const list = Array.isArray(imgs) ? imgs : []; if (!list.length) return <Text type="secondary">Ninguna</Text>; return (<Button type="link" icon={<EyeOutlined />} onClick={() => openImageViewer(list, 0)} size="small" > Ver imagen </Button>); }, },
+        { title: 'Ubicación', dataIndex: 'location', key: 'location', width: 210, render: (v) => renderLocation(v), },
         { title: 'Observaciones', dataIndex: 'observaciones', key: 'observaciones', ellipsis: true, width: 240, },
         { title: 'Registrado por', dataIndex: 'created_by', key: 'created_by', width: 120, fixed: 'right', ellipsis: true, render: (v) => { if (!v) return <Text type="secondary">N/A</Text>; const display = usersById[v]; return display ? <Tooltip title={display}>{display}</Tooltip> : <Text type="secondary">{v.slice(0, 8)}...</Text>; }, },
-        { 
-            title: 'Acciones', 
-            key: 'acciones', 
-            width: 100, 
-            fixed: 'right', render: (_, record) => ( 
-            <Space size="small"> 
-                <Tooltip title="Editar">
-                    <Button shape="circle" icon={<EditOutlined />} onClick={() => handleEdit(record)} />
-                </Tooltip> 
-                <Tooltip title="Eliminar">
-                    <Button danger shape="circle" icon={<DeleteOutlined />} onClick={() => handleDelete(record)} />
-                </Tooltip> 
-            </Space> ), 
+        {
+            title: 'Acciones',
+            key: 'acciones',
+            width: 100,
+            fixed: 'right', render: (_, record) => (
+                <Space size="small">
+                    <Tooltip title="Editar">
+                        <Button shape="circle" icon={<EditOutlined />} onClick={() => handleEdit(record)} />
+                    </Tooltip>
+                    <Tooltip title="Eliminar">
+                        <Button danger shape="circle" icon={<DeleteOutlined />} onClick={() => handleDelete(record)} />
+                    </Tooltip>
+                </Space>),
         },
     ];
 
@@ -663,7 +665,7 @@ const ErgonomiaPage = () => {
                 </Col>
                 <Col>
                     <Space>
-                        <Button onClick={() => navigate(`/proyectos/${projectId}/monitoreo`)}><ArrowLeftOutlined /> Volver</Button>
+                        <Button onClick={() => navigate(`/proyectos/${projectId}/monitoreo`)}><ArrowLeftOutlined />Volver a monitoreos</Button>
                         <Button icon={<FileExcelOutlined />} onClick={exportToExcel} loading={loading}>Exportar</Button>
                         <Button type="primary" icon={<PlusOutlined />} onClick={handleAdd}>Agregar</Button>
                     </Space>
@@ -746,15 +748,15 @@ const ErgonomiaPage = () => {
                     preserve={false}
                     initialValues={
                         selected
-                        ? {
-                            ...selected,
-                            // ✅ Hora local al cargar para evitar desfase
-                            horario_medicion: selected.measured_at ? dayjs(selected.measured_at).local() : null,
-                            actividades: selected.actividades || '',
-                            image_urls: Array.isArray(selected.image_urls) ? selected.image_urls.join(', ') : (selected.image_urls || ''),
-                            location: typeof selected.location === 'object' ? JSON.stringify(selected.location) : (selected.location || ''),
-                          }
-                        : { }
+                            ? {
+                                ...selected,
+                                // ✅ Hora local al cargar para evitar desfase
+                                horario_medicion: selected.measured_at ? dayjs(selected.measured_at).local() : null,
+                                actividades: selected.actividades || '',
+                                image_urls: Array.isArray(selected.image_urls) ? selected.image_urls.join(', ') : (selected.image_urls || ''),
+                                location: typeof selected.location === 'object' ? JSON.stringify(selected.location) : (selected.location || ''),
+                            }
+                            : {}
                     }
                 >
                     <Divider orientation="left">Datos del Trabajador</Divider>
@@ -789,7 +791,7 @@ const ErgonomiaPage = () => {
                         <Col span={12}><Form.Item name="fuerza_agarre_kg" label="Fuerza de Agarre (Kg)"><InputNumber min={0} style={{ width: '100%' }} /></Form.Item></Col>
                         <Col span={12}><Form.Item name="mano_agarre" label="Mano (Agarre)"><Select placeholder="Seleccionar mano">{MANO_AGARRE_OPTIONS.map(o => <Option key={o} value={o}>{o}</Option>)}</Select></Form.Item></Col>
                     </Row>
-                    
+
                     <Divider orientation="left">Descripción de Carga</Divider>
                     <Row gutter={12}>
                         <Col span={8}><Form.Item name="carga_peso_kg" label="Peso (Kg)"><InputNumber min={0} style={{ width: '100%' }} /></Form.Item></Col>
