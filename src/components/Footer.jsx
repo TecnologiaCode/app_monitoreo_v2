@@ -24,7 +24,7 @@ const Footer = () => {
     
     >
       {/* El texto que quieres centrar */}
-      © 2025 Metric Version 3.0.0 | Derechos reservados
+      © 2025 Metric Version 3.1.0 | Derechos reservados
     </AntFooter>
   );
 };

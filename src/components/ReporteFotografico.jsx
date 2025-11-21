@@ -1,7 +1,7 @@
 import React from 'react';
 import { Page, Text, View, Document, StyleSheet, Image } from '@react-pdf/renderer';
 
-// Estilos Base
+// Estilos Base actualizados para el nuevo diseño
 const styles = StyleSheet.create({
   page: {
     paddingTop: 70, // Espacio para el encabezado fijo
@@ -17,42 +17,72 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     height: 60,
-    backgroundColor: '#2a8bb6', // Tu azul corporativo
-    padding: 10,
+    backgroundColor: '#2a8bb6',
+    paddingHorizontal: 25,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between'
+  },
+  headerLeft: {
+    flexDirection: 'column',
+  },
+  headerRight: {
+    flexDirection: 'column',
+    alignItems: 'flex-end',
+    maxWidth: '50%'
   },
   headerTitle: {
     color: 'white',
     fontSize: 18,
     fontWeight: 'bold',
-    marginLeft: 20,
+    fontFamily: 'Helvetica-Bold'
   },
   headerSubtitle: {
-    color: '#e0e0e0',
-    fontSize: 10,
-    marginRight: 20,
+    color: 'white',
+    fontSize: 11,
+    fontFamily: 'Helvetica'
   },
-  // La celda base (el tamaño se sobreescribirá dinámicamente)
+  headerProjectText: {
+    color: 'white',
+    fontSize: 10,
+    fontFamily: 'Helvetica',
+    textAlign: 'right'
+  },
+  
+  // --- ESTILOS DE LA TARJETA MODIFICADOS ---
   gridItem: {
     padding: 5,
     boxSizing: 'border-box',
   },
+  // La tarjeta ahora no tiene padding, el borde lo es todo
   card: {
     border: '1pt solid #e0e0e0',
     height: '100%',
     display: 'flex',
     flexDirection: 'column',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 5,
-    borderRadius: 4
+    justifyContent: 'flex-start', // Alinea al inicio
+    borderRadius: 3
   },
+  // Nuevo: Encabezado de la tarjeta (celeste)
+  cardHeader: {
+    backgroundColor: '#f0f5ff', // Celeste claro
+    padding: 5,
+    borderBottom: '1pt solid #e0e0e0',
+    width: '100%',
+    alignItems: 'center' // <-- AÑADIDO: Centra los bloques de texto
+  },
+  cardHeaderText: {
+    fontSize: 9,
+    fontFamily: 'Helvetica',
+    color: '#333',
+    textAlign: 'center' // <-- AÑADIDO: Centra el texto dentro del bloque
+  },
+  // La imagen ocupa el espacio restante
   imageContainer: {
-    width: '95%',
-    height: '75%', // Ajustamos un poco para dar aire
-    marginBottom: 5,
+    flexGrow: 1, // Ocupa el espacio disponible
+    padding: 5,
+    width: '100%',
+    height: '70%', // Damos altura para que se calcule
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center'
@@ -62,38 +92,47 @@ const styles = StyleSheet.create({
     width: '100%',
     height: '100%'
   },
-  textContainer: {
+  // Nuevo: Footer de la tarjeta
+  cardFooter: {
+    borderTop: '1pt solid #e0e0e0',
+    padding: 4,
     width: '100%',
     alignItems: 'center'
   },
-  areaText: {
-    fontSize: 9,
-    fontWeight: 'bold',
-    textAlign: 'center',
-    marginBottom: 2,
-    color: '#2a8bb6',
-    backgroundColor: '#f0f8ff',
-    paddingHorizontal: 4,
-    borderRadius: 2,
-    width: '100%'
-  },
-  puestoText: {
+  cardFooterText: {
     fontSize: 8,
-    textAlign: 'center',
+    fontFamily: 'Helvetica',
+    color: '#555'
+  },
+footer: {
+    position: 'absolute',
+    bottom: 15,
+    left: 30, // Alineado con el padding de la página
+    right: 30, // Alineado con el padding de la página
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  footerLeft: {
+    flexDirection: 'column',
+  },
+  footerText: {
+    fontSize: 9,
+    fontFamily: 'Helvetica',
     color: '#333',
   },
-  pageNumber: {
-    position: 'absolute',
-    fontSize: 8,
-    bottom: 15,
-    left: 0,
-    right: 0,
-    textAlign: 'center',
-    color: 'grey',
+  footerBold: {
+    fontFamily: 'Helvetica-Bold',
+    color: '#000',
+  },
+  footerRight: {
+    fontSize: 9,
+    fontFamily: 'Helvetica',
+    color: '#333',
   }
 });
 
-// Helper para paginar
+// Helper para paginar (sin cambios)
 const chunkArray = (array, size) => {
   const chunked = [];
   for (let i = 0; i < array.length; i += size) {
@@ -102,20 +141,14 @@ const chunkArray = (array, size) => {
   return chunked;
 };
 
-export const ReporteFotografico = ({ data, empresa, layout = "2x4" }) => {
-  // 1. Desglosamos el layout (ej: "2x4" -> cols=2, rows=4)
+// Componente (sin cambios en props)
+export const ReporteFotografico = ({ data, empresa, layout = "2x4", tituloMonitoreo }) => {
   const [colsStr, rowsStr] = layout.split('x');
   const cols = parseInt(colsStr);
   const rows = parseInt(rowsStr);
-
-  // 2. Calculamos items por página
   const itemsPerPage = cols * rows;
-
-  // 3. Calculamos ancho y alto dinámico
-  // Restamos un pelín para márgenes seguros
   const itemWidth = `${100 / cols}%`; 
   const itemHeight = `${100 / rows}%`;
-
   const pages = chunkArray(data, itemsPerPage);
 
   return (
@@ -123,27 +156,35 @@ export const ReporteFotografico = ({ data, empresa, layout = "2x4" }) => {
       {pages.map((pageItems, i) => (
         <Page key={i} size="LETTER" style={styles.page}>
           
-          {/* ENCABEZADO FIJO */}
+          {/* ENCABEZADO FIJO (Sin cambios) */}
           <View style={styles.header} fixed>
-             <View>
-                <Text style={styles.headerTitle}>Resumen Fotográfico</Text>
-                <Text style={{...styles.headerSubtitle, marginLeft: 20, fontSize: 8}}>
-                    Generado por Metric
-                </Text>
-             </View>
-             <Text style={styles.headerSubtitle}>{empresa}</Text>
+            <View style={styles.headerLeft}>
+              <Text style={styles.headerTitle}>REPORTE FOTOGRÁFICO</Text>
+              <Text style={styles.headerSubtitle}>
+                MONITOREO DE: {tituloMonitoreo ? tituloMonitoreo.toUpperCase() : 'GENERAL'}
+              </Text>
+            </View>
+            <View style={styles.headerRight}>
+              <Text style={styles.headerProjectText}>
+                PROYECTO: {empresa ? empresa.toUpperCase() : 'SIN PROYECTO'}
+              </Text>
+            </View>
           </View>
 
           {/* GRILLA DINÁMICA */}
           {pageItems.map((item, j) => (
             <View key={j} style={[styles.gridItem, { width: itemWidth, height: itemHeight }]}>
+              
+              {/* --- ESTRUCTURA DE TARJETA ACTUALIZADA --- */}
               <View style={styles.card}>
                 
-                {/* Título (Area) */}
-                <Text style={styles.areaText} numberOfLines={1}>
-                    {item.area || 'General'}
-                </Text>
-                
+                {/* Encabezado con datos */}
+                <View style={styles.cardHeader}>
+                  <Text style={styles.cardHeaderText}>Código: {item.codigo || '-'}</Text>
+                  <Text style={styles.cardHeaderText}>Área: {item.area || '-'}</Text>
+                  <Text style={styles.cardHeaderText}>Punto de monitoreo: {item.puesto || '-'}</Text>
+                </View>
+
                 {/* Imagen */}
                 <View style={styles.imageContainer}>
                   <Image 
@@ -152,21 +193,33 @@ export const ReporteFotografico = ({ data, empresa, layout = "2x4" }) => {
                   />
                 </View>
 
-                {/* Pie (Puesto) */}
-                <View style={styles.textContainer}>
-                    <Text style={styles.puestoText} numberOfLines={2}>
-                        {item.puesto}
-                    </Text>
+                {/* Footer con Fecha/Hora */}
+                <View style={styles.cardFooter}>
+                  <Text style={styles.cardFooterText}>Fecha y hora: {item.fechaHora || '-'}</Text>
                 </View>
 
               </View>
             </View>
           ))}
 
-          {/* NUMERO DE PÁGINA */}
-          <Text style={styles.pageNumber} render={({ pageNumber, totalPages }) => (
-            `Página ${pageNumber} de ${totalPages}`
-          )} fixed />
+          {/* PIE DE PÁGINA ACTUALIZADO */}
+          <View style={styles.footer} fixed>
+            
+            {/* Lado Izquierdo */}
+            <View style={styles.footerLeft}>
+              <Text style={styles.footerText}>
+                Realizado por: <Text style={styles.footerBold}>PACHABOL S.R.L.</Text>
+              </Text>
+              <Text style={styles.footerText}>
+                Generado por: <Text style={styles.footerBold}>Metric v3.0</Text>
+              </Text>
+            </View>
+
+            {/* Lado Derecho */}
+            <Text style={styles.footerRight} render={({ pageNumber, totalPages }) => (
+              `Página: ${pageNumber} de ${totalPages}`
+            )} />
+          </View>
           
         </Page>
       ))}

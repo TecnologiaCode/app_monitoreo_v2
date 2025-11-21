@@ -1,4 +1,5 @@
 // src/pages/CalorFrioPage.jsx
+
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   Table,
@@ -19,6 +20,8 @@ import {
   Col,
   Descriptions,
   Pagination,
+  Checkbox, // <-- NUEVO
+  Divider   // <-- NUEVO
 } from 'antd';
 import {
   PlusOutlined,
@@ -30,14 +33,23 @@ import {
   ArrowLeftOutlined,
   FileExcelOutlined,
   EyeOutlined,
+  FilePdfOutlined, // <-- NUEVO
+  SaveOutlined,    // <-- NUEVO
+  LeftOutlined,    // <-- NUEVO
+  RightOutlined    // <-- NUEVO
 } from '@ant-design/icons';
+
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { supabase } from '../supabaseClient.js';
 
 import dayjs from 'dayjs';
 import 'dayjs/locale/es';
 import utc from 'dayjs/plugin/utc';
-import XLSX from 'xlsx-js-style';
+import * as XLSX from 'xlsx';          // (tu versión nueva de Excel)
+
+// IMPORTS DEL REPORTE FOTOGRÁFICO
+import { PDFViewer } from '@react-pdf/renderer';
+import { ReporteFotografico } from '../components/ReporteFotografico';
 
 dayjs.locale('es');
 dayjs.extend(utc);
@@ -46,44 +58,20 @@ const { Title, Text } = Typography;
 const { Option } = Select;
 
 const PRIMARY_BLUE = '#2a8bb6';
-const TABLE_NAME = 'estres_frio';
+const TABLE_NAME = 'estres_frio'; // O estres_calor, segun corresponda
 
 /* =========================================================
    Helpers
    ========================================================= */
 
-/**
- * MUESTRA la hora local.
- * Toma un timestamp UTC de la base de datos y lo formatea a la hora local del navegador.
- * @param {string} v - El timestamp UTC (ej: "2025-11-06T14:30:00+00:00")
- * @returns {string} - La hora en formato local (ej: "10:30")
- */
-
-
 const formatHoraUTC = (v) => {
   if (!v) return '';
-  try {
-    // .local() convierte el timestamp UTC a la zona horaria del navegador
-    return dayjs(v).utc().format('HH:mm');
-  } catch {
-    return String(v);
-  }
+  try { return dayjs(v).utc().format('HH:mm'); } catch { return String(v); }
 };
 
-/**
- * MUESTRA la fecha local.
- * Toma un timestamp UTC de la base de datos y lo formatea a la fecha local del navegador.
- * @param {string} v - El timestamp UTC
- * @returns {string} - La fecha en formato local (ej: "06/11/2025")
- */
 const formatFechaUTC = (v) => {
   if (!v) return '';
-  try {
-    // .local() convierte el timestamp UTC a la zona horaria del navegador
-    return dayjs(v).utc().format('DD/MM/YYYY');
-  } catch {
-    return String(v);
-  }
+  try { return dayjs(v).utc().format('DD/MM/YYYY'); } catch { return String(v); }
 };
 
 const renderLocation = (v) => {
@@ -91,24 +79,15 @@ const renderLocation = (v) => {
   if (typeof v === 'object') {
     const lat = v.lat ?? v.latitude ?? '';
     const lng = v.lng ?? v.longitude ?? '';
-    if (lat !== '' || lng !== '') {
-      return <span>lat: {lat}{lng !== '' ? `, lng: ${lng}` : ''}</span>;
-    }
+    if (lat !== '' || lng !== '') return <span>lat: {lat}{lng !== '' ? `, lng: ${lng}` : ''}</span>;
     const e = v.easting ?? '';
     const n = v.northing ?? '';
     const z = v.utm_zone ?? '';
-    if (e !== '' || n !== '' || z !== '') {
-      return <span>{`E: ${e}${n !== '' ? `, N: ${n}` : ''}${z ? `, Z: ${z}` : ''}`}</span>;
-    }
+    if (e !== '' || n !== '' || z !== '') return <span>{`E: ${e}${n !== '' ? `, N: ${n}` : ''}${z ? `, Z: ${z}` : ''}`}</span>;
     if (Array.isArray(v)) return v.join(', ');
     return JSON.stringify(v);
   }
-  try {
-    const parsed = JSON.parse(v);
-    return renderLocation(parsed);
-  } catch {
-    return <span>{String(v)}</span>;
-  }
+  try { const parsed = JSON.parse(v); return renderLocation(parsed); } catch { return <span>{String(v)}</span>; }
 };
 
 const toNumberOrString = (v) => {
@@ -119,105 +98,50 @@ const toNumberOrString = (v) => {
   return Number.isNaN(n) ? String(v) : n;
 };
 
-/* =========================================================
-   Exportar a Excel (Plantilla estilo imagen)
-   Columnas:
-   N°, Puesto, Hora, %HR, Vel viento, P(mmHg), Temp °C,
-   Descripción de actividades, Metabolismo energético,
-   Aislamiento térmico, IMÁGENES, COORDENADAS UTM, OBSERVACIÓN
-   ========================================================= */
+// Helper para obtener array de imagenes limpio
+const getImagesArray = (reg) => {
+    if (Array.isArray(reg.image_urls)) return reg.image_urls;
+    if (typeof reg.image_urls === 'string' && reg.image_urls.trim() !== '') {
+        try {
+            const parsed = JSON.parse(reg.image_urls);
+            if(Array.isArray(parsed)) return parsed;
+            return [reg.image_urls];
+        } catch {
+            return reg.image_urls.split(',').map(s => s.trim());
+        }
+    }
+    return [];
+};
+
+/* ============================ Export a Excel ============================ */
 const exportToExcel = (rows = [], header) => {
   try {
-    const empresaNombre =
-      typeof header === 'object' ? (header.empresa || '—') : (header || '—');
-    const fechaMonitoreo =
-      typeof header === 'object' ? (header.fecha || '') : '';
+    const empresaNombre = typeof header === 'object' ? (header.empresa || '—') : (header || '—');
+    const fechaMonitoreo = typeof header === 'object' ? (header.fecha || '') : '';
 
-    const B = {
-      top: { style: 'thin', color: { rgb: '000000' } },
-      bottom: { style: 'thin', color: { rgb: '000000' } },
-      left: { style: 'thin', color: { rgb: '000000' } },
-      right: { style: 'thin', color: { rgb: '000000' } },
-    };
-
-    const th = {
-      font: { bold: true },
-      alignment: { vertical: 'center', horizontal: 'center', wrapText: true },
-      fill: { fgColor: { rgb: 'FFFF00' } },
-      border: B,
-    };
-    const tdC = {
-      alignment: { vertical: 'center', horizontal: 'center', wrapText: true },
-      border: B,
-    };
-    const thL = {
-      font: { bold: true },
-      alignment: { vertical: 'center', horizontal: 'left', wrapText: true },
-      border: B,
-    };
-    const tdL = {
-      alignment: { vertical: 'center', horizontal: 'left', wrapText: true },
-      border: B,
-    };
+    const B = { top: { style: 'thin', color: { rgb: '000000' } }, bottom: { style: 'thin', color: { rgb: '000000' } }, left: { style: 'thin', color: { rgb: '000000' } }, right: { style: 'thin', color: { rgb: '000000' } } };
+    const th = { font: { bold: true }, alignment: { vertical: 'center', horizontal: 'center', wrapText: true }, fill: { fgColor: { rgb: 'FFFF00' } }, border: B };
+    const tdC = { alignment: { vertical: 'center', horizontal: 'center', wrapText: true }, border: B };
+    const thL = { font: { bold: true }, alignment: { vertical: 'center', horizontal: 'left', wrapText: true }, border: B };
+    const tdL = { alignment: { vertical: 'center', horizontal: 'left', wrapText: true }, border: B };
 
     const wsData = [];
+    wsData.push([{ v: 'PLANILLA DE MEDICIÓN DE ESTRÉS POR FRÍO', s: { font: { bold: true, sz: 14 }, alignment: { vertical: 'center', horizontal: 'center' } } }]);
+    wsData.push([{ v: 'NOMBRE DE LA EMPRESA', s: thL }, { v: empresaNombre, s: tdL }, { v: 'FECHA DE MONITOREO', s: thL }, { v: fechaMonitoreo, s: tdL }]);
+    wsData.push([{ v: 'EQUIPO', s: thL }, { v: header?.equipo || '', s: tdL }, { v: 'MODELO DEL EQUIPO', s: thL }, { v: header?.modelos || '', s: tdL }]);
+    wsData.push([{ v: 'SERIE DEL EQUIPO', s: thL }, { v: header?.series || '', s: tdL }, { v: 'ÁREA DE TRABAJO', s: thL }, { v: header?.area || '', s: tdL }]);
+    wsData.push(['']); 
 
-    // Título
     wsData.push([
-      {
-        v: 'PLANILLA DE MEDICIÓN DE ESTRÉS POR FRÍO',
-        s: { font: { bold: true, sz: 14 }, alignment: { vertical: 'center', horizontal: 'center' } },
-      },
+      { v: 'N°', s: th }, { v: 'AREA DE TRABAJO', s: th }, { v: 'PUESTO DE TRABAJO', s: th }, { v: 'HORA DE MEDICIÓN', s: th },
+      { v: '%HR', s: th }, { v: 'VEL. VIENTO (m/s)', s: th }, { v: 'P (mmHg)', s: th }, { v: 'TEMP °C', s: th },
+      { v: 'DESCRIPCIÓN DE ACTIVIDADES', s: th }, { v: 'METABOLISMO ENERGÉTICO', s: th }, { v: 'AISLAMIENTO TÉRMICO', s: th },
+      { v: 'IMÁGENES', s: th }, { v: 'COORDENADAS UTM', s: th }, { v: 'OBSERVACIÓN', s: th },
     ]);
 
-    // Meta (4 celdas por fila)
-    wsData.push([
-      { v: 'NOMBRE DE LA EMPRESA', s: thL },
-      { v: empresaNombre, s: tdL },
-      { v: 'FECHA DE MONITOREO', s: thL },
-      { v: fechaMonitoreo, s: tdL },
-    ]);
-    wsData.push([
-      { v: 'EQUIPO', s: thL },
-      { v: header?.equipo || '', s: tdL },
-      { v: 'MODELO DEL EQUIPO', s: thL },
-      { v: header?.modelos || '', s: tdL },
-    ]);
-    wsData.push([
-      { v: 'SERIE DEL EQUIPO', s: thL },
-      { v: header?.series || '', s: tdL },
-      { v: 'ÁREA DE TRABAJO', s: thL },
-      { v: header?.area || '', s: tdL },
-    ]);
-
-    wsData.push(['']); // separador
-
-    // Encabezados de la tabla (orden acorde a la imagen y tu esquema)
-    wsData.push([
-      { v: 'N°', s: th },
-      { v: 'AREA DE TRABAJO', s: th },
-      { v: 'PUESTO DE TRABAJO', s: th },
-      { v: 'HORA DE MEDICIÓN', s: th },
-      { v: '%HR', s: th },
-      { v: 'VEL. VIENTO (m/s)', s: th },
-      { v: 'P (mmHg)', s: th },
-      { v: 'TEMP °C', s: th },
-      { v: 'DESCRIPCIÓN DE ACTIVIDADES', s: th },
-      { v: 'METABOLISMO ENERGÉTICO', s: th },
-      { v: 'AISLAMIENTO TÉRMICO', s: th },
-      { v: 'IMÁGENES', s: th },
-      { v: 'COORDENADAS UTM', s: th },
-      { v: 'OBSERVACIÓN', s: th },
-    ]);
-
-    // Filas
     rows.forEach((r, i) => {
-      const imgs = Array.isArray(r.image_urls)
-        ? r.image_urls.join(', ')
-        : (r.image_urls || '');
-      const locText = typeof r.location === 'object'
-        ? JSON.stringify(r.location)
-        : (r.location || '');
+      const imgs = Array.isArray(r.image_urls) ? r.image_urls.join(', ') : (r.image_urls || '');
+      const locText = typeof r.location === 'object' ? JSON.stringify(r.location) : (r.location || '');
 
       wsData.push([
         { v: i + 1, s: tdC },
@@ -231,35 +155,15 @@ const exportToExcel = (rows = [], header) => {
         { v: r.desc_actividades || '', s: tdL },
         { v: r.metabolismo || '', s: tdL },
         { v: r.aislamiento || '', s: tdL },
-        { v: imgs, s: tdL },     // IMÁGENES
-        { v: locText, s: tdL },  // COORDENADAS UTM
-        { v: r.observaciones || '', s: tdL }, // OBSERVACIÓN
+        { v: imgs, s: tdL },
+        { v: locText, s: tdL },
+        { v: r.observaciones || '', s: tdL },
       ]);
     });
 
     const ws = XLSX.utils.aoa_to_sheet(wsData);
-
-    // Unir título sobre 13 columnas (0..12)
     ws['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 12 } }];
-
-    // Anchos de columnas
-    ws['!cols'] = [
-      { wch: 6 },   // N°
-      { wch: 36 },   // AREA
-      { wch: 36 },  // Puesto
-      { wch: 12 },  // Hora
-      { wch: 10 },  // %HR
-      { wch: 14 },  // Viento
-      { wch: 12 },  // P
-      { wch: 10 },  // Temp
-      { wch: 40 },  // Descripción
-      { wch: 28 },  // Metabolismo
-      { wch: 28 },  // Aislamiento
-      { wch: 42 },  // IMÁGENES
-      { wch: 34 },  // COORDENADAS UTM
-      { wch: 34 },  // OBSERVACIÓN
-    ];
-
+    ws['!cols'] = [{ wch: 6 }, { wch: 36 }, { wch: 36 }, { wch: 12 }, { wch: 10 }, { wch: 14 }, { wch: 12 }, { wch: 10 }, { wch: 40 }, { wch: 28 }, { wch: 28 }, { wch: 42 }, { wch: 34 }, { wch: 34 }];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Estrés Frío');
     XLSX.writeFile(wb, 'reporte_estres_frio.xlsx');
@@ -285,6 +189,8 @@ const CalorFrioPage = () => {
     equipo: '',
     modelos: '',
     series: '',
+    tipo_monitoreo: 'Estrés',
+    descripcion_proyecto: ''
   });
 
   const [rows, setRows] = useState([]);
@@ -305,34 +211,31 @@ const CalorFrioPage = () => {
   const [imageViewerList, setImageViewerList] = useState([]);
   const [imageViewerIndex, setImageViewerIndex] = useState(0);
 
+  // --- Estados PDF y Selección ---
+  const [isPdfModalVisible, setIsPdfModalVisible] = useState(false);
+  const [pdfStep, setPdfStep] = useState('selection'); 
+  const [pdfData, setPdfData] = useState([]);
+  const [tempSelections, setTempSelections] = useState({}); 
+  const [recordSelections, setRecordSelections] = useState({}); 
+  const [isSavingSelection, setIsSavingSelection] = useState(false);
+  const [pdfLayout, setPdfLayout] = useState('2x4');
+
   /* ---------- Cabecera (proyecto/monitoreo/equipos) ---------- */
   useEffect(() => {
     (async () => {
       setLoadingHeader(true);
       try {
         if (monitoreoId) {
-          const { data: m, error: em } = await supabase
-            .from('monitoreos')
-            .select('id, tipo_monitoreo, proyecto_id, equipos_asignados')
-            .eq('id', monitoreoId)
-            .single();
+          const { data: m, error: em } = await supabase.from('monitoreos').select('id, tipo_monitoreo, proyecto_id, equipos_asignados').eq('id', monitoreoId).single();
           if (em) throw em;
+          
+          const { data: p } = await supabase.from('proyectos').select('id, nombre, created_at, descripcion').eq('id', m.proyecto_id).single();
 
-          const { data: p } = await supabase
-            .from('proyectos')
-            .select('id, nombre, created_at')
-            .eq('id', m.proyecto_id)
-            .single();
-
-          // Equipos
           let equipos = [];
           let ids = m.equipos_asignados;
           if (typeof ids === 'string') { try { ids = JSON.parse(ids); } catch { ids = []; } }
           if (Array.isArray(ids) && ids.length) {
-            const { data: eq } = await supabase
-              .from('equipos')
-              .select('id, nombre_equipo, modelo, serie')
-              .in('id', ids);
+            const { data: eq } = await supabase.from('equipos').select('id, nombre_equipo, modelo, serie').in('id', ids);
             equipos = eq || [];
           }
 
@@ -343,42 +246,32 @@ const CalorFrioPage = () => {
             equipo: equipos.length ? equipos.map(e => e.nombre_equipo || 's/n').join(', ') : '',
             modelos: equipos.length ? equipos.map(e => e.modelo || 's/n').join(', ') : '',
             series: equipos.length ? equipos.map(e => e.serie || 's/n').join(', ') : '',
+            tipo_monitoreo: m.tipo_monitoreo,
+            descripcion_proyecto: p?.descripcion || ''
           }));
         } else if (projectId) {
-          const { data: p } = await supabase
-            .from('proyectos')
-            .select('id, nombre, created_at')
-            .eq('id', projectId)
-            .single();
-
+          const { data: p } = await supabase.from('proyectos').select('id, nombre, created_at, descripcion').eq('id', projectId).single();
           setHeaderInfo((h) => ({
             ...h,
             empresa: p?.nombre || '—',
             fecha: p?.created_at ? dayjs(p.created_at).format('DD/MM/YYYY') : '—',
+            descripcion_proyecto: p?.descripcion || ''
           }));
         }
-      } catch (e) {
-        console.error('Header error:', e);
-      } finally {
-        setLoadingHeader(false);
-      }
+      } catch (e) { console.error('Header error:', e); } finally { setLoadingHeader(false); }
     })();
   }, [projectId, monitoreoId]);
 
-  /* ---------- Traer filas (no excluir registros antiguos) ---------- */
-  const fetchRows = async () => {
-    setLoading(true);
+  /* --------- Traer filas (ASCENDENTE POR FECHA) --------- */
+  const fetchRows = async (isBackground = false) => {
+    if (!isBackground) setLoading(true);
     try {
-      let q = supabase.from(TABLE_NAME).select('*').order('inserted_at', { ascending: true });
+      // CAMBIO AQUÍ: Orden ASCENDENTE por fecha (lo más viejo primero)
+      let q = supabase.from(TABLE_NAME).select('*').order('measured_at', { ascending: true });
 
-      // Si hay registros viejos con solo proyecto_id o solo monitoreo_id, no los excluyas:
-      if (monitoreoId && projectId) {
-        q = q.or(`monitoreo_id.eq.${monitoreoId},proyecto_id.eq.${projectId}`);
-      } else if (monitoreoId) {
-        q = q.eq('monitoreo_id', monitoreoId);
-      } else if (projectId) {
-        q = q.eq('proyecto_id', projectId);
-      }
+      if (monitoreoId && projectId) { q = q.or(`monitoreo_id.eq.${monitoreoId},proyecto_id.eq.${projectId}`); }
+      else if (monitoreoId) { q = q.eq('monitoreo_id', monitoreoId); }
+      else if (projectId) { q = q.eq('proyecto_id', projectId); }
 
       const { data, error } = await q;
       if (error) throw error;
@@ -387,78 +280,117 @@ const CalorFrioPage = () => {
         let imageUrls = [];
         if (Array.isArray(r.image_urls)) imageUrls = r.image_urls;
         else if (typeof r.image_urls === 'string' && r.image_urls.trim() !== '') {
-          imageUrls = r.image_urls.split(',').map((s) => s.trim());
+          try {
+              const parsed = JSON.parse(r.image_urls);
+              if(Array.isArray(parsed)) imageUrls = parsed;
+              else imageUrls = r.image_urls.split(',').map((s) => s.trim());
+          } catch {
+              imageUrls = r.image_urls.split(',').map((s) => s.trim());
+          }
         }
-        return {
-          ...r,
-          hr_percent: toNumberOrString(r.hr_percent),
-          vel_viento_ms: toNumberOrString(r.vel_viento_ms),
-          presion_mmhg: toNumberOrString(r.presion_mmhg),
-          temp_c: toNumberOrString(r.temp_c),
-          image_urls: imageUrls,
-        };
+        return { ...r, image_urls: imageUrls };
       });
 
       setRows(mapped);
       setCurrentPage(1);
 
-      // Ajusta la fecha del encabezado con la primera fila
       if (mapped.length && mapped[0].measured_at) {
         const raw = String(mapped[0].measured_at);
         const [yyyy, mm, dd] = raw.slice(0, 10).split('-');
         setHeaderInfo((h) => ({ ...h, fecha: `${dd}/${mm}/${yyyy}` }));
       }
 
-      // Perfiles (created_by)
       const ids = Array.from(new Set(mapped.map(m => m.created_by).filter(Boolean)));
       if (ids.length) {
-        const { data: profs } = await supabase
-          .from('profiles')
-          .select('id, username, nombre_completo, email, descripcion, rol, estado')
-          .in('id', ids);
+        const { data: profs } = await supabase.from('profiles').select('id, username, nombre_completo').in('id', ids);
         const dict = {};
-        (profs || []).forEach((u) => {
-          const display =
-            (u.nombre_completo && u.nombre_completo.trim()) ||
-            (u.username && u.username.trim()) ||
-            (u.descripcion && u.descripcion.trim()) ||
-            (u.rol && u.rol.trim()) ||
-            (u.estado && u.estado.trim()) ||
-            (u.email && u.email.trim()) ||
-            u.id;
-          dict[u.id] = display;
-        });
+        (profs || []).forEach((u) => { dict[u.id] = u.nombre_completo || u.username || u.id; });
         setUsersById(dict);
-      } else {
-        setUsersById({});
-      }
-    } catch (e) {
-      console.error('Fetch error:', e);
-      message.error('No se pudo cargar Estrés Frío.');
-      setRows([]);
-    } finally {
-      setLoading(false);
-    }
+      } else { setUsersById({}); }
+    } catch (e) { console.error('Fetch error:', e); message.error('No se pudo cargar Estrés.'); setRows([]); }
+    finally { if (!isBackground) setLoading(false); }
   };
 
   useEffect(() => {
     fetchRows();
-    const ch = supabase
-      .channel('rt-estres-frio')
-      .on('postgres_changes', { event: '*', schema: 'public', table: TABLE_NAME }, fetchRows)
-      .subscribe();
+    const ch = supabase.channel('rt-estres').on('postgres_changes', { event: '*', schema: 'public', table: TABLE_NAME }, () => fetchRows(true)).subscribe();
     return () => supabase.removeChannel(ch);
   }, [projectId, monitoreoId]);
 
-  /* ---------- CRUD ---------- */
+  /* ================ LÓGICA PDF Y SELECCIÓN ================ */
+  const handlePrevImage = (regId, total) => { setTempSelections(prev => ({ ...prev, [regId]: (prev[regId] - 1 + total) % total })); };
+  const handleNextImage = (regId, total) => { setTempSelections(prev => ({ ...prev, [regId]: (prev[regId] + 1) % total })); };
+  const handleRecordSelectionToggle = (recordId) => { setRecordSelections(prev => ({ ...prev, [recordId]: !prev[recordId] })); };
+  const handleSelectAllRecords = () => { const allSelected = {}; rows.filter(r => getImagesArray(r).length > 0).forEach(r => { allSelected[r.id] = true; }); setRecordSelections(allSelected); };
+  const handleDeselectAllRecords = () => { const allDeselected = {}; rows.filter(r => getImagesArray(r).length > 0).forEach(r => { allDeselected[r.id] = false; }); setRecordSelections(allDeselected); };
+
+  const handleOpenPdf = () => {
+    const registrosConFotos = rows.filter(r => getImagesArray(r).length > 0);
+    if (registrosConFotos.length === 0) { message.warning("No hay registros con imágenes."); return; }
+    const initialSelections = {};
+    const initialRecordSelections = {};
+    registrosConFotos.forEach(r => {
+        const imgs = getImagesArray(r);
+        const savedIndex = r.selected_image_index || 0;
+        initialSelections[r.id] = savedIndex < imgs.length ? savedIndex : 0;
+        initialRecordSelections[r.id] = true;
+    });
+    setTempSelections(initialSelections);
+    setRecordSelections(initialRecordSelections);
+    setPdfStep('selection');
+    setIsPdfModalVisible(true);
+  };
+
+  const handleSaveAndGenerate = async () => {
+    setIsSavingSelection(true);
+    const loadingMsg = message.loading("Generando reporte...", 0);
+    try {
+        const registrosConFotos = rows.filter(r => getImagesArray(r).length > 0);
+        const registrosSeleccionados = registrosConFotos.filter(r => recordSelections[r.id] === true);
+        if (registrosSeleccionados.length === 0) { message.warning("No ha seleccionado ningún registro."); setIsSavingSelection(false); loadingMsg(); return; }
+
+        const supabaseTasks = [];
+        const dataForPdf = [];
+        let i = 0;
+
+        for (const r of registrosSeleccionados) {
+            const imgs = getImagesArray(r);
+            const selectedIdx = tempSelections[r.id] !== undefined ? tempSelections[r.id] : 0;
+            const finalIdx = selectedIdx < imgs.length ? selectedIdx : 0;
+            const originalUrl = imgs[finalIdx];
+            const codigo = `EST-${String(i + 1).padStart(2, '0')}`;
+
+            dataForPdf.push({
+                imageUrl: originalUrl,
+                area: r.area || 'N/A',
+                puesto: r.puesto_trabajo,
+                codigo: codigo,
+                fechaHora: `${formatFechaUTC(r.measured_at)} - ${formatHoraUTC(r.measured_at)}`
+            });
+
+            supabaseTasks.push(
+                supabase.from(TABLE_NAME).update({ selected_image_index: finalIdx }).eq('id', r.id)
+            );
+            i++;
+        }
+
+        await Promise.all(supabaseTasks);
+        fetchRows(true); 
+        setPdfData(dataForPdf);
+        setPdfStep('view'); 
+        message.success("Reporte generado");
+    } catch (error) { console.error("Error generando PDF:", error); message.error("Ocurrió un error inesperado."); } 
+    finally { loadingMsg(); setIsSavingSelection(false); }
+  };
+
+  /* --------- CRUD --------- */
   const handleAdd = () => { setSelected(null); setIsFormOpen(true); };
   const handleEdit = (rec) => { setSelected(rec); setIsFormOpen(true); };
-
   const handleDelete = (rec) => {
     Modal.confirm({
       title: '¿Eliminar registro?',
       icon: <ExclamationCircleOutlined />,
-      content: `Se eliminará el registro "${rec.puesto_trabajo}"`,
+      content: `Se eliminará el registro de "${rec.puesto_trabajo || '—'}"`,
       okText: 'Eliminar', okType: 'danger', cancelText: 'Cancelar',
       onOk: async () => {
         try {
@@ -474,19 +406,14 @@ const CalorFrioPage = () => {
   const onCancelForm = () => setIsFormOpen(false);
 
   const payloadFromValues = (values) => {
-    // measured_at en UTC usando la hora seleccionada
     let measuredAt = null;
     if (values.horario) {
       const h = values.horario.hour();
       const m = values.horario.minute();
-      if (selected?.measured_at) {
-        measuredAt = dayjs.utc(selected.measured_at).hour(h).minute(m).second(0).millisecond(0).toISOString();
-      } else {
-        measuredAt = dayjs.utc().hour(h).minute(m).second(0).millisecond(0).toISOString();
-      }
-    } else if (selected?.measured_at) {
-      measuredAt = selected.measured_at;
-    }
+      const base = selected?.measured_at ? dayjs(selected.measured_at) : dayjs();
+      const local = base.hour(h).minute(m).second(0).millisecond(0);
+      measuredAt = local.format('YYYY-MM-DD[T]HH:mm:ssZ');
+    } else if (selected?.measured_at) { measuredAt = selected.measured_at; }
 
     let imageUrls = null;
     if (values.image_urls && values.image_urls.trim() !== '') {
@@ -508,7 +435,7 @@ const CalorFrioPage = () => {
       desc_actividades: values.desc_actividades || null,
       observaciones: values.observaciones || null,
       image_urls: imageUrls,
-      location: values.location || null, // texto/JSON
+      location: values.location || null,
     };
   };
 
@@ -521,10 +448,7 @@ const CalorFrioPage = () => {
       if (error) throw error;
       message.success('Registro agregado.');
       setIsFormOpen(false);
-    } catch (e) {
-      console.error(e);
-      message.error('No se pudo agregar.');
-    } finally { setSaving(false); }
+    } catch (e) { console.error(e); message.error('No se pudo agregar.'); } finally { setSaving(false); }
   };
 
   const doEdit = async () => {
@@ -536,13 +460,10 @@ const CalorFrioPage = () => {
       if (error) throw error;
       message.success('Registro actualizado.');
       setIsFormOpen(false);
-    } catch (e) {
-      console.error(e);
-      message.error('No se pudo actualizar.');
-    } finally { setSaving(false); }
+    } catch (e) { console.error(e); message.error('No se pudo actualizar.'); } finally { setSaving(false); }
   };
 
-  /* ---------- Filtro/Paginación y visor de imágenes ---------- */
+  /* --------- Filtro / Paginación --------- */
   const filtered = useMemo(() => {
     if (!searchText) return rows;
     const s = searchText.toLowerCase();
@@ -554,7 +475,7 @@ const CalorFrioPage = () => {
         (r.desc_actividades && r.desc_actividades.toLowerCase().includes(s)) ||
         (r.metabolismo && r.metabolismo.toLowerCase().includes(s)) ||
         (r.aislamiento && r.aislamiento.toLowerCase().includes(s)) ||
-        (formatHoraLocal(r.measured_at) && formatHoraLocal(r.measured_at).includes(s)) ||
+        (formatHoraUTC(r.measured_at) && formatHoraUTC(r.measured_at).includes(s)) ||
         (imgs && imgs.toLowerCase().includes(s)) ||
         (r.observaciones && r.observaciones.toLowerCase().includes(s))
       );
@@ -575,52 +496,32 @@ const CalorFrioPage = () => {
     setImageViewerOpen(true);
   };
 
-  /* ---------- Columnas ---------- */
+  /* ---------- Columnas (Orden ASC por defecto) ---------- */
   const columns = [
-    {
-      title: 'N°',
-      key: 'n',
-      width: 60, render: (_, __, i) => (currentPage - 1) * pageSize + i + 1
+    { title: 'N°', key: 'n', width: 60, render: (_, __, i) => (currentPage - 1) * pageSize + i + 1 },
+    
+    // Fecha y Hora al principio (ASCENDENTE POR DEFECTO)
+    { 
+        title: 'FECHA', 
+        dataIndex: 'measured_at', 
+        width: 120, 
+        sorter: (a, b) => dayjs(a.measured_at).unix() - dayjs(b.measured_at).unix(), 
+        defaultSortOrder: 'ascend', // <-- CAMBIO: ASCENDENTE
+        render: (t) => formatFechaUTC(t) 
     },
+    // Columna Hora (se conserva)
+              {
+                  title: 'HORA',
+                  dataIndex: 'measured_at',
+                  key: 'measured_time',
+                  sorter: (a, b) => dayjs(a.measured_at).unix() - dayjs(b.measured_at).unix(),
+                  width: 90,
+                  render: (t) => formatHoraUTC(t),
+              },
 
-    // Nueva columna Fecha
-    {
-      title: 'FECHA',
-      dataIndex: 'measured_at',
-      key: 'measured_date',
-      // ✅ Permite ordenar ascendente/descendente por fecha
-      sorter: (a, b) => dayjs(a.measured_at).unix() - dayjs(b.measured_at).unix(),
-      defaultSortOrder: 'descend',
-      width: 120, render: (t) => formatFechaUTC(t),
-    },
-
-    {
-      title: 'HORA',
-      dataIndex: 'measured_at',
-      key: 'measured_at',
-      // ✅ Permite ordenar ascendente/descendente por hora
-      sorter: (a, b) => dayjs(a.measured_at).unix() - dayjs(b.measured_at).unix(),
-      width: 110, render: (t) => formatHoraUTC(t) || <Text type="secondary">—</Text>
-    },
-
-    {
-      title: 'AREA DE TRABAJO',
-      dataIndex: 'area',
-      key: 'area',
-      width: 250,
-      ellipsis: true
-    },
-
-    {
-      title: 'PUESTO DE TRABAJO',
-      dataIndex: 'puesto_trabajo',
-      key: 'puesto_trabajo',
-      width: 250,
-      ellipsis: true
-    },
-
-
-
+    { title: 'AREA DE TRABAJO', dataIndex: 'area', key: 'area', width: 250, ellipsis: true },
+    { title: 'PUESTO DE TRABAJO', dataIndex: 'puesto_trabajo', key: 'puesto_trabajo', width: 250, ellipsis: true },
+    
     {
       title: 'RESULTADOS DEL EQUIPO',
       children: [
@@ -685,7 +586,6 @@ const CalorFrioPage = () => {
     },
   ];
 
-  /* ---------- Render ---------- */
   return (
     <>
       <Breadcrumb style={{ margin: '16px 0' }}>
@@ -709,6 +609,9 @@ const CalorFrioPage = () => {
             <Button icon={<FileExcelOutlined />} onClick={() => exportToExcel(rows, headerInfo)}>
               Exportar a Excel
             </Button>
+            <Button icon={<FilePdfOutlined />} onClick={handleOpenPdf} style={{ backgroundColor: '#ff4d4f', color: 'white', borderColor: '#ff4d4f' }}>
+              Reporte Fotos
+            </Button>
             <Button type="primary" icon={<PlusOutlined />} onClick={handleAdd}>
               Agregar
             </Button>
@@ -716,7 +619,7 @@ const CalorFrioPage = () => {
         </Col>
       </Row>
 
-      {/* Buscador + tamaño de página */}
+      {/* Buscador */}
       <Row justify="space-between" align="middle" style={{ marginBottom: 12, gap: 15 }}>
         <Col flex="0 0 520px">
           <Input.Search
@@ -768,7 +671,6 @@ const CalorFrioPage = () => {
         </div>
       </Spin>
 
-      {/* Pie paginación */}
       <Row justify="space-between" align="middle" style={{ marginTop: 12 }}>
         <Col>
           {(() => {
@@ -808,7 +710,6 @@ const CalorFrioPage = () => {
               ? {
                 area: selected.area || '',
                 puesto_trabajo: selected.puesto_trabajo,
-                // mostrar hora en LOCAL al editar
                 horario: selected.measured_at ? dayjs(selected.measured_at).utc().local() : null,
                 desc_actividades: selected.desc_actividades || '',
                 metabolismo: selected.metabolismo || '',
@@ -893,24 +794,24 @@ const CalorFrioPage = () => {
         footer={
           imageViewerList.length > 1
             ? [
-              <Button
-                key="prev"
-                onClick={() =>
-                  setImageViewerIndex((prev) => (prev - 1 + imageViewerList.length) % imageViewerList.length)
-                }
-              >
-                Anterior
-              </Button>,
-              <Button
-                key="next"
-                type="primary"
-                onClick={() =>
-                  setImageViewerIndex((prev) => (prev + 1) % imageViewerList.length)
-                }
-              >
-                Siguiente
-              </Button>,
-            ]
+                <Button
+                  key="prev"
+                  onClick={() =>
+                    setImageViewerIndex((prev) => (prev - 1 + imageViewerList.length) % imageViewerList.length)
+                  }
+                >
+                  Anterior
+                </Button>,
+                <Button
+                  key="next"
+                  type="primary"
+                  onClick={() =>
+                    setImageViewerIndex((prev) => (prev + 1) % imageViewerList.length)
+                  }
+                >
+                  Siguiente
+                </Button>,
+              ]
             : null
         }
         width={720}
@@ -930,6 +831,75 @@ const CalorFrioPage = () => {
         ) : (
           <Text type="secondary">Sin imagen.</Text>
         )}
+      </Modal>
+
+      {/* === MODAL DE PDF === */}
+      <Modal
+          title={pdfStep === 'selection' ? "Seleccionar Imágenes" : "Vista Previa PDF"}
+          open={isPdfModalVisible}
+          onCancel={() => setIsPdfModalVisible(false)}
+          width={1000}
+          style={{ top: 20 }}
+          footer={
+            pdfStep === 'selection' ? (
+                <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', alignItems: 'center' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <Text strong>Distribución:</Text>
+                        <Select defaultValue="2x4" style={{ width: 120 }} onChange={setPdfLayout}>
+                            <Option value="2x4">2 x 4</Option><Option value="2x3">2 x 3</Option>
+                            <Option value="3x3">3 x 3</Option><Option value="3x4">3 x 4</Option>
+                        </Select>
+                    </div>
+                    <Button type="primary" icon={<SaveOutlined />} onClick={handleSaveAndGenerate} loading={isSavingSelection}>
+                        Guardar y Generar PDF
+                    </Button>
+                </div>
+            ) : (
+                <Button onClick={() => setPdfStep('selection')}><ArrowLeftOutlined /> Volver</Button>
+            )
+          }
+      >
+          <div style={{ height: '75vh', overflowY: 'auto', overflowX: 'hidden' }}>
+              {pdfStep === 'selection' && (
+                  <>
+                    <div style={{ marginBottom: 16, paddingBottom: 16, borderBottom: '1px solid #f0f0f0', display: 'flex', justifyContent: 'center', gap: 16 }}>
+                        <Button size="small" onClick={handleSelectAllRecords}>Seleccionar Todos</Button>
+                        <Button size="small" onClick={handleDeselectAllRecords}>Deseleccionar Todos</Button>
+                    </div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', justifyContent: 'center' }}>
+                      {rows.filter(r => getImagesArray(r).length > 0).map((r) => {
+                          const imgs = getImagesArray(r);
+                          const currentIdx = tempSelections[r.id] || 0;
+                          const isSelected = recordSelections[r.id] === true;
+                          return (
+                              <div key={r.id} style={{ width: '23%', border: isSelected ? '1px solid #ddd' : '1px dashed #999', opacity: isSelected ? 1 : 0.5, padding: '8px', borderRadius: '8px', display: 'flex', flexDirection: 'column', alignItems: 'center', backgroundColor: '#fafafa', position: 'relative' }}>
+                                  <Checkbox checked={isSelected} onChange={() => handleRecordSelectionToggle(r.id)} style={{ position: 'absolute', top: 5, right: 5, zIndex: 20 }} />
+                                  <Text strong style={{ fontSize: 12 }}>{headerInfo.tipo_monitoreo}</Text>
+                                  <div style={{ position: 'relative', width: '100%', height: '150px', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff', border: '1px solid #eee', marginTop: 5 }}>
+                                      {imgs.length > 1 && <Button shape="circle" icon={<LeftOutlined />} size="small" style={{ position: 'absolute', left: 5 }} onClick={() => handlePrevImage(r.id, imgs.length)} />}
+                                      <img src={imgs[currentIdx]} style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
+                                      {imgs.length > 1 && <Button shape="circle" icon={<RightOutlined />} size="small" style={{ position: 'absolute', right: 5 }} onClick={() => handleNextImage(r.id, imgs.length)} />}
+                                      {imgs.length > 1 && <span style={{ position: 'absolute', bottom: 2, right: 5, fontSize: 10, background: 'rgba(255,255,255,0.7)' }}>{currentIdx + 1}/{imgs.length}</span>}
+                                  </div>
+                                  <Text style={{ fontSize: 11, marginTop: 5 }}>{r.puesto_trabajo}</Text>
+                              </div>
+                          );
+                      })}
+                    </div>
+                  </>
+              )}
+              {pdfStep === 'view' && (
+                  <PDFViewer width="100%" height="100%" showToolbar={true}>
+                      <ReporteFotografico 
+                          data={pdfData} 
+                          empresa={headerInfo.descripcion_proyecto || 'SIN DESCRIPCIÓN'} 
+                          layout={pdfLayout}
+                          tituloMonitoreo={headerInfo.tipo_monitoreo || 'Estrés Frío'} 
+                          descripcionProyecto={''}
+                      />
+                  </PDFViewer>
+              )}
+          </div>
       </Modal>
     </>
   );

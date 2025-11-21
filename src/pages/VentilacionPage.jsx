@@ -1,4 +1,5 @@
 // src/pages/VentilacionPage.jsx
+
 import React, { useState, useEffect, useMemo } from 'react';
 import {
   Table,
@@ -18,7 +19,10 @@ import {
   Col,
   Descriptions,
   Pagination,
+  Checkbox,
+  Divider
 } from 'antd';
+
 import {
   PlusOutlined,
   EditOutlined,
@@ -31,13 +35,22 @@ import {
   FileExcelOutlined,
   EyeOutlined,
   DeleteOutlined as DeleteIcon,
+  FilePdfOutlined,
+  SaveOutlined,
+  LeftOutlined,
+  RightOutlined
 } from '@ant-design/icons';
+
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { supabase } from '../supabaseClient.js';
 import dayjs from 'dayjs';
 import 'dayjs/locale/es';
 import utc from 'dayjs/plugin/utc';
-import XLSX from 'xlsx-js-style';
+import * as XLSX from 'xlsx';          // (tu versión nueva de Excel)
+
+// IMPORTS DEL REPORTE FOTOGRÁFICO
+import { PDFViewer } from '@react-pdf/renderer';
+import { ReporteFotografico } from '../components/ReporteFotografico';
 
 dayjs.extend(utc);
 dayjs.locale('es');
@@ -54,44 +67,24 @@ const TIPOS_VENTILACION = [
   'Mixta',
 ];
 
-/* =========================================================
-   Helpers
-   ========================================================= */
-
-/**
- * MUESTRA la hora local.
- * Toma un timestamp UTC de la base de datos y lo formatea a la hora local del navegador.
- * @param {string} v - El timestamp UTC (ej: "2025-11-06T14:30:00+00:00")
- * @returns {string} - La hora en formato local (ej: "10:30")
- */
-
-
+// --- HELPERS ---
 const formatHoraUTC = (v) => {
   if (!v) return '';
   try {
-    // .local() convierte el timestamp UTC a la zona horaria del navegador
     return dayjs(v).utc().format('HH:mm');
   } catch {
     return String(v);
   }
 };
 
-/**
- * MUESTRA la fecha local.
- * Toma un timestamp UTC de la base de datos y lo formatea a la fecha local del navegador.
- * @param {string} v - El timestamp UTC
- * @returns {string} - La fecha en formato local (ej: "06/11/2025")
- */
 const formatFechaUTC = (v) => {
   if (!v) return '';
   try {
-    // .local() convierte el timestamp UTC a la zona horaria del navegador
     return dayjs(v).utc().format('DD/MM/YYYY');
   } catch {
     return String(v);
   }
 };
-
 
 
 const VentilacionPage = () => {
@@ -100,11 +93,13 @@ const VentilacionPage = () => {
   const navigate = useNavigate();
   const [form] = Form.useForm();
 
+  // --- Estados de Datos ---
   const [monitoreoInfo, setMonitoreoInfo] = useState(null);
   const [proyectoInfo, setProyectoInfo] = useState(null);
   const [equiposInfo, setEquiposInfo] = useState([]);
   const [registros, setRegistros] = useState([]);
 
+  // --- Estados de UI ---
   const [loadingHeader, setLoadingHeader] = useState(true);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -112,17 +107,25 @@ const VentilacionPage = () => {
   const [selectedRegistro, setSelectedRegistro] = useState(null);
   const [lastRtMsg, setLastRtMsg] = useState('');
 
-  // visor de imágenes
+  // --- Estados Visor Imágenes ---
   const [imageViewerOpen, setImageViewerOpen] = useState(false);
   const [imageViewerList, setImageViewerList] = useState([]);
   const [imageViewerIndex, setImageViewerIndex] = useState(0);
 
-  // búsqueda + paginación
+  // --- Estados PDF y Selección ---
+  const [isPdfModalVisible, setIsPdfModalVisible] = useState(false);
+  const [pdfStep, setPdfStep] = useState('selection'); 
+  const [pdfData, setPdfData] = useState([]);
+  const [tempSelections, setTempSelections] = useState({}); 
+  const [recordSelections, setRecordSelections] = useState({}); 
+  const [isSavingSelection, setIsSavingSelection] = useState(false);
+  const [pdfLayout, setPdfLayout] = useState('2x4');
+
+  // --- Estados Búsqueda/Paginación ---
   const [searchText, setSearchText] = useState('');
   const [pageSize, setPageSize] = useState(10);
   const [currentPage, setCurrentPage] = useState(1);
 
-  // diccionario de usuarios {id: nombre}
   const [usersById, setUsersById] = useState({});
 
   /* ========== helpers UI ========== */
@@ -135,34 +138,135 @@ const VentilacionPage = () => {
 
   const renderLocation = (v) => {
     if (!v) return <Text type="secondary">N/A</Text>;
-
     if (typeof v === 'object') {
       const lat = v.lat ?? v.latitude;
       const lng = v.lng ?? v.longitude;
       if (lat !== undefined || lng !== undefined) {
-        return (
-          <span>
-            lat: {lat ?? ''}
-            {lat !== undefined && lng !== undefined ? ', ' : ''}
-            {lng !== undefined ? `lng: ${lng}` : ''}
-          </span>
-        );
+        return (<span>lat: {lat ?? ''}{lat !== undefined && lng !== undefined ? ', ' : ''}{lng !== undefined ? `lng: ${lng}` : ''}</span>);
       }
       if (v.easting || v.northing || v.utm_zone) {
-        return (
-          <span>
-            E: {v.easting ?? ''} | N: {v.northing ?? ''} | Z: {v.utm_zone ?? ''}
-          </span>
-        );
+        return (<span>E: {v.easting ?? ''} | N: {v.northing ?? ''} | Z: {v.utm_zone ?? ''}</span>);
       }
       return <span>{JSON.stringify(v)}</span>;
     }
-
     try {
       const parsed = JSON.parse(v);
       return renderLocation(parsed);
     } catch {
       return <span>{v}</span>;
+    }
+  };
+
+  const getImagesArray = (reg) => {
+    if (Array.isArray(reg.image_urls)) return reg.image_urls;
+    if (typeof reg.image_urls === 'string' && reg.image_urls.trim() !== '') {
+        try {
+            const parsed = JSON.parse(reg.image_urls);
+            if(Array.isArray(parsed)) return parsed;
+            return [reg.image_urls]; 
+        } catch {
+            return reg.image_urls.split(',').map(s => s.trim());
+        }
+    }
+    return [];
+  };
+
+  /* ================ LÓGICA PDF Y SELECCIÓN ================ */
+
+  const handlePrevImage = (regId, total) => {
+    setTempSelections(prev => ({ ...prev, [regId]: (prev[regId] - 1 + total) % total }));
+  };
+
+  const handleNextImage = (regId, total) => {
+    setTempSelections(prev => ({ ...prev, [regId]: (prev[regId] + 1) % total }));
+  };
+
+  const handleRecordSelectionToggle = (recordId) => {
+    setRecordSelections(prev => ({ ...prev, [recordId]: !prev[recordId] }));
+  };
+
+  const handleSelectAllRecords = () => {
+    const allSelected = {};
+    registros.filter(r => getImagesArray(r).length > 0).forEach(r => { allSelected[r.id] = true; });
+    setRecordSelections(allSelected);
+  };
+
+  const handleDeselectAllRecords = () => {
+    const allDeselected = {};
+    registros.filter(r => getImagesArray(r).length > 0).forEach(r => { allDeselected[r.id] = false; });
+    setRecordSelections(allDeselected);
+  };
+
+  const handleOpenPdf = () => {
+    const registrosConFotos = registros.filter(r => getImagesArray(r).length > 0);
+    if (registrosConFotos.length === 0) {
+        message.warning("No hay registros con imágenes.");
+        return;
+    }
+    const initialSelections = {};
+    const initialRecordSelections = {};
+    registrosConFotos.forEach(r => {
+        const imgs = getImagesArray(r);
+        const savedIndex = r.selected_image_index || 0;
+        initialSelections[r.id] = savedIndex < imgs.length ? savedIndex : 0;
+        initialRecordSelections[r.id] = true; 
+    });
+    setTempSelections(initialSelections);
+    setRecordSelections(initialRecordSelections);
+    setPdfStep('selection');
+    setIsPdfModalVisible(true);
+  };
+
+  const handleSaveAndGenerate = async () => {
+    setIsSavingSelection(true);
+    const loadingMsg = message.loading("Generando reporte...", 0);
+    try {
+        const registrosConFotos = registros.filter(r => getImagesArray(r).length > 0);
+        const registrosSeleccionados = registrosConFotos.filter(r => recordSelections[r.id] === true);
+
+        if (registrosSeleccionados.length === 0) {
+            message.warning("No ha seleccionado ningún registro.");
+            setIsSavingSelection(false);
+            loadingMsg();
+            return;
+        }
+
+        const supabaseTasks = [];
+        const dataForPdf = [];
+        let i = 0;
+
+        for (const r of registrosSeleccionados) {
+            const imgs = getImagesArray(r);
+            const selectedIdx = tempSelections[r.id] !== undefined ? tempSelections[r.id] : 0;
+            const finalIdx = selectedIdx < imgs.length ? selectedIdx : 0;
+            const originalUrl = imgs[finalIdx];
+            const codigo = `VEN-${String(i + 1).padStart(2, '0')}`;
+
+            dataForPdf.push({
+                imageUrl: originalUrl, 
+                area: r.area || 'N/A', // Ahora usamos el campo 'area' de la BD
+                puesto: r.local_trabajo, 
+                codigo: codigo,
+                fechaHora: `${formatFechaUTC(r.created_at)} - ${formatHoraUTC(r.created_at)}`
+            });
+
+            supabaseTasks.push(
+                supabase.from(VENTILACION_TABLE_NAME).update({ selected_image_index: finalIdx }).eq('id', r.id)
+            );
+            i++;
+        }
+
+        await Promise.all(supabaseTasks);
+        fetchRegistros(); 
+        setPdfData(dataForPdf);
+        setPdfStep('view'); 
+        message.success("Reporte generado");
+    } catch (error) {
+        console.error("Error generando PDF:", error);
+        message.error("Ocurrió un error inesperado.");
+    } finally {
+        loadingMsg();
+        setIsSavingSelection(false);
     }
   };
 
@@ -172,7 +276,7 @@ const VentilacionPage = () => {
     try {
       const { data, error } = await supabase
         .from('proyectos')
-        .select('id, nombre, created_at, estado')
+        .select('id, nombre, created_at, estado, descripcion')
         .eq('id', pId)
         .single();
       if (error) throw error;
@@ -184,26 +288,15 @@ const VentilacionPage = () => {
   };
 
   const fetchEquiposInfo = async (equipoIds) => {
-    if (!equipoIds) {
-      setEquiposInfo([]);
-      return;
-    }
-    if (typeof equipoIds === 'string') {
-      try {
-        equipoIds = JSON.parse(equipoIds);
-      } catch {
-        equipoIds = [];
-      }
-    }
-    if (!Array.isArray(equipoIds) || equipoIds.length === 0) {
-      setEquiposInfo([]);
-      return;
-    }
+    if (!equipoIds) { setEquiposInfo([]); return; }
+    let list = equipoIds;
+    if (typeof list === 'string') { try { list = JSON.parse(list); } catch { list = []; } }
+    if (!Array.isArray(list) || list.length === 0) { setEquiposInfo([]); return; }
     try {
       const { data, error } = await supabase
         .from('equipos')
         .select('id, nombre_equipo, modelo, serie')
-        .in('id', equipoIds);
+        .in('id', list);
       if (error) throw error;
       setEquiposInfo(data || []);
     } catch (error) {
@@ -215,6 +308,7 @@ const VentilacionPage = () => {
   useEffect(() => {
     const fetchHeaderData = async () => {
       if (!monitoreoId) {
+        if (projectId) await fetchProyectoInfo(projectId);
         setLoadingHeader(false);
         return;
       }
@@ -242,7 +336,6 @@ const VentilacionPage = () => {
         setLoadingHeader(false);
       }
     };
-
     fetchHeaderData();
   }, [monitoreoId, projectId]);
 
@@ -253,60 +346,30 @@ const VentilacionPage = () => {
         .from('profiles')
         .select('id, username, nombre_completo, email, descripcion, rol, estado')
         .in('id', ids);
-
-      if (error) {
-        console.warn('No se pudieron cargar usuarios:', error.message);
-        return;
-      }
-
+      if (error) return;
       const dict = {};
       (data || []).forEach((u) => {
-        const display =
-          (u.nombre_completo && u.nombre_completo.trim()) ||
-          (u.username && u.username.trim()) ||
-          (u.descripcion && u.descripcion.trim()) ||
-          (u.rol && u.rol.trim()) ||
-          (u.estado && u.estado.trim()) ||
-          (u.email && u.email.trim()) ||
-          u.id;
+        const display = (u.nombre_completo && u.nombre_completo.trim()) || (u.username && u.username.trim()) || u.id;
         dict[u.id] = display;
       });
-
       setUsersById(dict);
-    } catch (err) {
-      console.error('Error trayendo usuarios:', err);
-    }
+    } catch (err) { console.error('Error trayendo usuarios:', err); }
   };
 
   /* ========================= REGISTROS ========================= */
-  const fetchRegistros = async () => {
-    setLoading(true);
+  const fetchRegistros = async (isBackground = false) => {
+    if (!isBackground) setLoading(true);
     try {
       let query = supabase
         .from(VENTILACION_TABLE_NAME)
         .select('*')
         .order('created_at', { ascending: true });
 
-      if (monitoreoId) {
-        query = query.eq('monitoreo_id', monitoreoId);
-      } else if (projectId) {
-        query = query.eq('proyecto_id', projectId);
-      }
+      if (monitoreoId) query = query.eq('monitoreo_id', monitoreoId);
+      else if (projectId) query = query.eq('proyecto_id', projectId);
 
       let { data, error } = await query;
       if (error) throw error;
-
-      if ((!data || data.length === 0) && projectId) {
-        const { data: dataByProj, error: errProj } = await supabase
-          .from(VENTILACION_TABLE_NAME)
-          .select('*')
-          .eq('proyecto_id', projectId)
-          .order('created_at', { ascending: true });
-
-        if (!errProj && dataByProj && dataByProj.length > 0) {
-          data = dataByProj;
-        }
-      }
 
       const mapped = (data || []).map((r) => {
         let imgs = [];
@@ -315,95 +378,48 @@ const VentilacionPage = () => {
         } else if (typeof r.image_urls === 'string' && r.image_urls.trim() !== '') {
           try {
             const parsed = JSON.parse(r.image_urls);
-            if (Array.isArray(parsed)) {
-              imgs = parsed;
-            } else {
-              imgs = [r.image_urls];
-            }
+            if (Array.isArray(parsed)) imgs = parsed;
+            else imgs = [r.image_urls];
           } catch {
             imgs = r.image_urls.split(',').map((s) => s.trim());
           }
         }
-
+        
         let loc = r.location;
         if (typeof r.location === 'string' && r.location.trim() !== '') {
-          try {
-            loc = JSON.parse(r.location);
-          } catch {
-            // se queda como string
-          }
+          try { loc = JSON.parse(r.location); } catch {}
         }
 
-        return {
-          ...r,
-          image_urls: imgs,
-          location: loc,
-        };
+        return { ...r, image_urls: imgs, location: loc };
       });
 
       setRegistros(mapped);
       setCurrentPage(1);
 
-      // traer usuarios de created_by
-      const createdByIds = Array.from(
-        new Set(
-          (mapped || [])
-            .map((m) => m.created_by)
-            .filter((v) => v && typeof v === 'string')
-        )
-      );
-      if (createdByIds.length > 0) {
-        await fetchUsersByIds(createdByIds);
-      } else {
-        setUsersById({});
-      }
+      const createdByIds = Array.from(new Set((mapped || []).map((m) => m.created_by).filter((v) => v && typeof v === 'string')));
+      if (createdByIds.length > 0) await fetchUsersByIds(createdByIds);
+      else setUsersById({});
     } catch (e) {
       console.error('Error ventilación:', e);
       message.error('No se pudieron cargar los datos de ventilación.');
       setRegistros([]);
     } finally {
-      setLoading(false);
+      if (!isBackground) setLoading(false);
     }
   };
 
   useEffect(() => {
     fetchRegistros();
-
     const channel = supabase
       .channel('rt-ventilacion-all')
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: VENTILACION_TABLE_NAME,
-        },
-        (payload) => {
-          console.log('RT ventilacion', payload);
-          setLastRtMsg(
-            `Cambio ${payload.eventType} en ID ${payload.new?.id || payload.old?.id || '—'}`
-          );
-          fetchRegistros();
-        }
-      )
+      .on('postgres_changes', { event: '*', schema: 'public', table: VENTILACION_TABLE_NAME }, () => fetchRegistros(true))
       .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    return () => { supabase.removeChannel(channel); };
   }, [monitoreoId, projectId]);
 
   /* ========================= CRUD ========================= */
-  const handleAdd = () => {
-    setSelectedRegistro(null);
-    setIsFormModalVisible(true);
-  };
-
-  const handleEdit = (record) => {
-    setSelectedRegistro(record);
-    setIsFormModalVisible(true);
-  };
-
+  const handleAdd = () => { setSelectedRegistro(null); setIsFormModalVisible(true); };
+  const handleEdit = (record) => { setSelectedRegistro(record); setIsFormModalVisible(true); };
   const handleDelete = (record) => {
     Modal.confirm({
       title: '¿Confirmar eliminación?',
@@ -414,41 +430,30 @@ const VentilacionPage = () => {
       cancelText: 'Cancelar',
       onOk: async () => {
         try {
-          const { error } = await supabase
-            .from(VENTILACION_TABLE_NAME)
-            .delete()
-            .eq('id', record.id);
+          const { error } = await supabase.from(VENTILACION_TABLE_NAME).delete().eq('id', record.id);
           if (error) throw error;
           message.success('Registro eliminado.');
-        } catch (err) {
-          console.error(err);
-          message.error('No se pudo eliminar.');
-        }
+        } catch (err) { message.error('No se pudo eliminar.'); }
       },
     });
   };
 
-  const handleFormOk = () => {
-    selectedRegistro ? handleEditOk() : handleAddOk();
-  };
-
-  const handleFormCancel = () => {
-    setIsFormModalVisible(false);
-  };
+  const handleFormOk = () => { selectedRegistro ? handleEditOk() : handleAddOk(); };
+  const handleFormCancel = () => { setIsFormModalVisible(false); };
 
   const handleAddOk = async () => {
     setSaving(true);
     try {
       const values = await form.validateFields();
-
       let velMh = values.vel_aire_mh;
       if ((values.vel_aire_ms || values.vel_aire_ms === 0) && !velMh) {
         velMh = Number(values.vel_aire_ms) * 3600;
       }
-
       const payload = {
         proyecto_id: projectId || null,
         monitoreo_id: monitoreoId || null,
+        // Guardamos el campo area
+        area: values.area,
         local_trabajo: values.local_trabajo,
         tipo_ventilacion: values.tipo_ventilacion,
         temperatura_seca_c: values.temperatura_seca_c,
@@ -463,24 +468,14 @@ const VentilacionPage = () => {
         vol_alto_m: values.vol_alto_m,
         volumen_m3: values.volumen_m3,
         renovaciones_h: values.renovaciones_h,
-        image_urls:
-          values.image_urls && values.image_urls.trim() !== ''
-            ? values.image_urls.split(',').map((s) => s.trim())
-            : null,
+        image_urls: values.image_urls && values.image_urls.trim() !== '' ? values.image_urls.split(',').map((s) => s.trim()) : null,
         location: values.location || null,
       };
-
       const { error } = await supabase.from(VENTILACION_TABLE_NAME).insert(payload);
       if (error) throw error;
-
       message.success('Registro agregado.');
       setIsFormModalVisible(false);
-    } catch (err) {
-      console.error('Error al agregar:', err);
-      message.error('No se pudo agregar.');
-    } finally {
-      setSaving(false);
-    }
+    } catch (err) { message.error('No se pudo agregar.'); } finally { setSaving(false); }
   };
 
   const handleEditOk = async () => {
@@ -488,13 +483,13 @@ const VentilacionPage = () => {
     setSaving(true);
     try {
       const values = await form.validateFields();
-
       let velMh = values.vel_aire_mh;
       if ((values.vel_aire_ms || values.vel_aire_ms === 0) && !velMh) {
         velMh = Number(values.vel_aire_ms) * 3600;
       }
-
       const updateData = {
+        // Actualizamos area
+        area: values.area,
         local_trabajo: values.local_trabajo,
         tipo_ventilacion: values.tipo_ventilacion,
         temperatura_seca_c: values.temperatura_seca_c,
@@ -509,127 +504,45 @@ const VentilacionPage = () => {
         vol_alto_m: values.vol_alto_m,
         volumen_m3: values.volumen_m3,
         renovaciones_h: values.renovaciones_h,
-        image_urls:
-          values.image_urls && values.image_urls.trim() !== ''
-            ? values.image_urls.split(',').map((s) => s.trim())
-            : null,
+        image_urls: values.image_urls && values.image_urls.trim() !== '' ? values.image_urls.split(',').map((s) => s.trim()) : null,
         location: values.location || null,
       };
-
-      const { error } = await supabase
-        .from(VENTILACION_TABLE_NAME)
-        .update(updateData)
-        .eq('id', selectedRegistro.id);
+      const { error } = await supabase.from(VENTILACION_TABLE_NAME).update(updateData).eq('id', selectedRegistro.id);
       if (error) throw error;
-
       message.success('Registro actualizado.');
       setIsFormModalVisible(false);
-    } catch (err) {
-      console.error('Error al actualizar:', err);
-      message.error('No se pudo actualizar.');
-    } finally {
-      setSaving(false);
-    }
+    } catch (err) { message.error('No se pudo actualizar.'); } finally { setSaving(false); }
   };
 
   /* ========================= EXPORTAR A EXCEL ========================= */
   const exportToExcel = () => {
     try {
       const headerBg = 'D9D9D9';
-      const titleStyle = {
-        font: { bold: true },
-        alignment: { vertical: 'center', horizontal: 'left' },
-      };
-      const headerStyle = {
-        font: { bold: true },
-        alignment: { vertical: 'center', horizontal: 'center', wrapText: true },
-        fill: { fgColor: { rgb: headerBg } },
-        border: {
-          top: { style: 'thin', color: { rgb: '000000' } },
-          bottom: { style: 'thin', color: { rgb: '000000' } },
-          left: { style: 'thin', color: { rgb: '000000' } },
-          right: { style: 'thin', color: { rgb: '000000' } },
-        },
-      };
-      const cellStyle = {
-        alignment: { vertical: 'center', horizontal: 'center', wrapText: true },
-        border: {
-          top: { style: 'thin', color: { rgb: '000000' } },
-          bottom: { style: 'thin', color: { rgb: '000000' } },
-          left: { style: 'thin', color: { rgb: '000000' } },
-          right: { style: 'thin', color: { rgb: '000000' } },
-        },
-      };
-      const dataStyle = {
-        ...cellStyle,
-        fill: { fgColor: { rgb: 'FFF2CC' } },
-      };
+      const titleStyle = { font: { bold: true }, alignment: { vertical: 'center', horizontal: 'left' } };
+      const headerStyle = { font: { bold: true }, alignment: { vertical: 'center', horizontal: 'center', wrapText: true }, fill: { fgColor: { rgb: headerBg } }, border: { top: { style: 'thin', color: { rgb: '000000' } }, bottom: { style: 'thin', color: { rgb: '000000' } }, left: { style: 'thin', color: { rgb: '000000' } }, right: { style: 'thin', color: { rgb: '000000' } } } };
+      const cellStyle = { alignment: { vertical: 'center', horizontal: 'center', wrapText: true }, border: { top: { style: 'thin', color: { rgb: '000000' } }, bottom: { style: 'thin', color: { rgb: '000000' } }, left: { style: 'thin', color: { rgb: '000000' } }, right: { style: 'thin', color: { rgb: '000000' } } } };
+      const dataStyle = { ...cellStyle, fill: { fgColor: { rgb: 'FFF2CC' } } };
 
       const empresa = proyectoInfo?.nombre || '';
-      const fechaInicio =
-        registros.length && registros[0].created_at
-          ? dayjs(registros[0].created_at).format('DD/MM/YYYY')
-          : proyectoInfo?.created_at
-            ? dayjs(proyectoInfo.created_at).format('DD/MM/YYYY')
-            : '';
+      const fechaInicio = registros.length && registros[0].created_at ? dayjs(registros[0].created_at).format('DD/MM/YYYY') : (proyectoInfo?.created_at ? dayjs(proyectoInfo.created_at).format('DD/MM/YYYY') : '');
       const fechaFin = '';
-      const equipos =
-        Array.isArray(equiposInfo) && equiposInfo.length
-          ? equiposInfo.map((e) => e.nombre_equipo || 's/n').join(', ')
-          : '';
-      const modelos =
-        Array.isArray(equiposInfo) && equiposInfo.length
-          ? equiposInfo.map((e) => e.modelo || 's/n').join(', ')
-          : '';
-      const series =
-        Array.isArray(equiposInfo) && equiposInfo.length
-          ? equiposInfo.map((e) => e.serie || 's/n').join(', ')
-          : '';
+      const equipos = Array.isArray(equiposInfo) && equiposInfo.length ? equiposInfo.map((e) => e.nombre_equipo || 's/n').join(', ') : '';
+      const modelos = Array.isArray(equiposInfo) && equiposInfo.length ? equiposInfo.map((e) => e.modelo || 's/n').join(', ') : '';
+      const series = Array.isArray(equiposInfo) && equiposInfo.length ? equiposInfo.map((e) => e.serie || 's/n').join(', ') : '';
 
       const wsData = [];
-
-      wsData.push([
-        {
-          v: 'PLANILLA DE MEDICIÓN Y EVALUACIÓN DE VENTILACIÓN',
-          s: {
-            font: { bold: true, sz: 14 },
-            alignment: { vertical: 'center', horizontal: 'center' },
-          },
-        },
-      ]);
-
-      wsData.push([
-        { v: 'INSTALACIÓN:', s: titleStyle },
-        { v: empresa, s: cellStyle },
-        '',
-        { v: 'EQUIPO:', s: titleStyle },
-        { v: equipos, s: cellStyle },
-      ]);
-      wsData.push([
-        { v: 'FECHA DE INICIO DEL MONITOREO:', s: titleStyle },
-        { v: fechaInicio, s: cellStyle },
-        '',
-        { v: 'MODELO:', s: titleStyle },
-        { v: modelos, s: cellStyle },
-      ]);
-      wsData.push([
-        { v: 'FECHA DE FINALIZACIÓN DEL MONITOREO:', s: titleStyle },
-        { v: fechaFin, s: cellStyle },
-        '',
-        { v: 'SERIE:', s: titleStyle },
-        { v: series, s: cellStyle },
-      ]);
-      wsData.push([
-        { v: 'TIPO DE MONITOREO:', s: titleStyle },
-        { v: monitoreoInfo?.tipo_monitoreo || 'SEGUIMIENTO', s: cellStyle },
-      ]);
-
+      wsData.push([{ v: 'PLANILLA DE MEDICIÓN Y EVALUACIÓN DE VENTILACIÓN', s: { font: { bold: true, sz: 14 }, alignment: { vertical: 'center', horizontal: 'center' } } }]);
+      wsData.push([{ v: 'INSTALACIÓN:', s: titleStyle }, { v: empresa, s: cellStyle }, '', { v: 'EQUIPO:', s: titleStyle }, { v: equipos, s: cellStyle }]);
+      wsData.push([{ v: 'FECHA DE INICIO DEL MONITOREO:', s: titleStyle }, { v: fechaInicio, s: cellStyle }, '', { v: 'MODELO:', s: titleStyle }, { v: modelos, s: cellStyle }]);
+      wsData.push([{ v: 'FECHA DE FINALIZACIÓN DEL MONITOREO:', s: titleStyle }, { v: fechaFin, s: cellStyle }, '', { v: 'SERIE:', s: titleStyle }, { v: series, s: cellStyle }]);
+      wsData.push([{ v: 'TIPO DE MONITOREO:', s: titleStyle }, { v: monitoreoInfo?.tipo_monitoreo || 'SEGUIMIENTO', s: cellStyle }]);
       wsData.push(['', '', '', '', '']);
-
       wsData.push([{ v: 'EVALUACIÓN DE RIESGOS', s: headerStyle }]);
 
+      // HEADERS ACTUALIZADOS
       wsData.push([
         { v: 'Nro.', s: headerStyle },
+        { v: 'Área', s: headerStyle }, // NUEVA COLUMNA EN EXCEL
         { v: 'Local de trabajo', s: headerStyle },
         { v: 'Tipo de ventilacion', s: headerStyle },
         { v: 'Temperatura seca (°c)', s: headerStyle },
@@ -647,6 +560,7 @@ const VentilacionPage = () => {
 
       wsData.push([
         { v: '', s: headerStyle },
+        { v: '', s: headerStyle }, // Espacio para Área
         { v: '', s: headerStyle },
         { v: '', s: headerStyle },
         { v: '', s: headerStyle },
@@ -665,6 +579,7 @@ const VentilacionPage = () => {
       registros.forEach((r, idx) => {
         wsData.push([
           { v: idx + 1, s: dataStyle },
+          { v: r.area || '', s: dataStyle }, // DATO DE AREA
           { v: r.local_trabajo || '', s: dataStyle },
           { v: r.tipo_ventilacion || '', s: dataStyle },
           { v: r.temperatura_seca_c ?? '', s: dataStyle },
@@ -683,30 +598,35 @@ const VentilacionPage = () => {
 
       const ws = XLSX.utils.aoa_to_sheet(wsData);
 
+      // MERGES RECALCULADOS (Todo movido 1 a la derecha desde col 1)
       ws['!merges'] = [
-        { s: { r: 0, c: 0 }, e: { r: 0, c: 13 } },
+        { s: { r: 0, c: 0 }, e: { r: 0, c: 14 } },
         { s: { r: 1, c: 1 }, e: { r: 1, c: 2 } },
         { s: { r: 2, c: 1 }, e: { r: 2, c: 2 } },
         { s: { r: 3, c: 1 }, e: { r: 3, c: 2 } },
         { s: { r: 4, c: 1 }, e: { r: 4, c: 2 } },
-        { s: { r: 6, c: 0 }, e: { r: 6, c: 13 } },
-        { s: { r: 7, c: 0 }, e: { r: 8, c: 0 } },
-        { s: { r: 7, c: 1 }, e: { r: 8, c: 1 } },
-        { s: { r: 7, c: 2 }, e: { r: 8, c: 2 } },
-        { s: { r: 7, c: 3 }, e: { r: 8, c: 3 } },
-        { s: { r: 7, c: 4 }, e: { r: 8, c: 4 } },
-        { s: { r: 7, c: 5 }, e: { r: 8, c: 5 } },
-        { s: { r: 7, c: 6 }, e: { r: 8, c: 6 } },
-        { s: { r: 7, c: 7 }, e: { r: 8, c: 7 } },
-        { s: { r: 7, c: 8 }, e: { r: 7, c: 10 } },
-        { s: { r: 7, c: 11 }, e: { r: 8, c: 11 } },
-        { s: { r: 7, c: 12 }, e: { r: 8, c: 12 } },
-        { s: { r: 7, c: 13 }, e: { r: 8, c: 13 } },
+        { s: { r: 6, c: 0 }, e: { r: 6, c: 14 } },
+        // Columnas simples (row 7-8 merged)
+        { s: { r: 7, c: 0 }, e: { r: 8, c: 0 } }, // Nro
+        { s: { r: 7, c: 1 }, e: { r: 8, c: 1 } }, // Area (NUEVO)
+        { s: { r: 7, c: 2 }, e: { r: 8, c: 2 } }, // Local
+        { s: { r: 7, c: 3 }, e: { r: 8, c: 3 } }, // Tipo
+        { s: { r: 7, c: 4 }, e: { r: 8, c: 4 } }, // Temp
+        { s: { r: 7, c: 5 }, e: { r: 8, c: 5 } }, // Vel ms
+        { s: { r: 7, c: 6 }, e: { r: 8, c: 6 } }, // Vel mh
+        { s: { r: 7, c: 7 }, e: { r: 8, c: 7 } }, // Area vent
+        { s: { r: 7, c: 8 }, e: { r: 8, c: 8 } }, // Caudal
+        // Cálculos auxiliares (Header r7 spans 3 cols)
+        { s: { r: 7, c: 9 }, e: { r: 7, c: 11 } }, // MERGE DE CALCULOS (Largo, Ancho, Alto)
+        { s: { r: 7, c: 12 }, e: { r: 8, c: 12 } }, // Volumen
+        { s: { r: 7, c: 13 }, e: { r: 8, c: 13 } }, // Renovacion
+        { s: { r: 7, c: 14 }, e: { r: 8, c: 14 } }, // Limite
       ];
 
       ws['!cols'] = [
         { wch: 4 },
-        { wch: 20 },
+        { wch: 20 }, // Area
+        { wch: 20 }, // Local
         { wch: 20 },
         { wch: 16 },
         { wch: 16 },
@@ -723,7 +643,6 @@ const VentilacionPage = () => {
 
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, 'Ventilación');
-
       XLSX.writeFile(wb, 'reporte_ventilacion.xlsx');
     } catch (err) {
       console.error('Error exportar ventilación:', err);
@@ -731,505 +650,231 @@ const VentilacionPage = () => {
     }
   };
 
-  /* ========================= FILTRO + PAGINACIÓN ========================= */
+  /* ========================= FILTROS Y COLUMNAS ========================= */
   const filteredRegistros = useMemo(() => {
     if (!searchText) return registros;
     const s = searchText.toLowerCase();
-    return registros.filter((r) => {
-      return (
-        (r.local_trabajo && r.local_trabajo.toLowerCase().includes(s)) ||
-        (r.tipo_ventilacion && r.tipo_ventilacion.toLowerCase().includes(s)) ||
-        (r.caudal_m3h && String(r.caudal_m3h).toLowerCase().includes(s)) ||
-        (r.volumen_m3 && String(r.volumen_m3).toLowerCase().includes(s)) ||
-        (r.renovaciones_h && String(r.renovaciones_h).toLowerCase().includes(s))
-      );
-    });
+    return registros.filter((r) => (
+      (r.local_trabajo && r.local_trabajo.toLowerCase().includes(s)) ||
+      (r.area && r.area.toLowerCase().includes(s)) || // Buscar por Area
+      (r.tipo_ventilacion && r.tipo_ventilacion.toLowerCase().includes(s))
+    ));
   }, [searchText, registros]);
 
   const totalFiltered = filteredRegistros.length;
-
   const paginatedRegistros = useMemo(() => {
     const start = (currentPage - 1) * pageSize;
     return filteredRegistros.slice(start, start + pageSize);
   }, [filteredRegistros, currentPage, pageSize]);
 
-  /* ========================= COLUMNAS TABLA ========================= */
   const columns = [
-    {
-      title: 'N°',
-      key: 'numero',
-      render: (_, __, i) => (currentPage - 1) * pageSize + i + 1,
-      width: 60,
-      fixed: 'left',
-    },
-
-    // Nueva columna Fecha
-    {
-      title: 'FECHA',
-      dataIndex: 'measured_at',
-      key: 'measured_date',
-      // ✅ Permite ordenar ascendente/descendente por fecha
-      sorter: (a, b) => dayjs(a.measured_at).unix() - dayjs(b.measured_at).unix(),
-      defaultSortOrder: 'descend',
-      width: 120, render: (t) => formatFechaUTC(t),
-    },
-
-    // Columna Hora (se conserva)
-    {
-      title: 'HORA',
-      dataIndex: 'measured_at',
-      key: 'measured_time',
-      // ✅ Permite ordenar ascendente/descendente por hora
-      sorter: (a, b) => dayjs(a.measured_at).unix() - dayjs(b.measured_at).unix(),
-      width: 100,
-      render: (t) => formatHoraUTC(t),
-    },
-
-    {
-      title: 'Local de trabajo',
-      dataIndex: 'local_trabajo',
-      key: 'local_trabajo',
-      width: 160,
-      ellipsis: true,
-    },
-    {
-      title: 'Tipo de ventilación',
-      dataIndex: 'tipo_ventilacion',
-      key: 'tipo_ventilacion',
-      width: 160,
-      ellipsis: true,
-    },
-    {
-      title: 'Temperatura seca (°C)',
-      dataIndex: 'temperatura_seca_c',
-      key: 'temperatura_seca_c',
-      width: 150,
-    },
-    {
-      title: 'Velocidad aire (m/s)',
-      dataIndex: 'vel_aire_ms',
-      key: 'vel_aire_ms',
-      width: 140,
-    },
-    {
-      title: 'Velocidad aire (m/h)',
-      dataIndex: 'vel_aire_mh',
-      key: 'vel_aire_mh',
-      width: 140,
-    },
-    {
-      title: 'Área de ventilación (m²)',
-      dataIndex: 'area_ventilacion_m2',
-      key: 'area_ventilacion_m2',
-      width: 150,
-    },
-    {
-      title: 'Caudal (m³/h)',
-      dataIndex: 'caudal_m3h',
-      key: 'caudal_m3h',
-      width: 140,
-    },
-    {
-      title: 'Volumen del ambiente (m³)',
-      dataIndex: 'volumen_m3',
-      key: 'volumen_m3',
-      width: 160,
-    },
-    {
-      title: 'N° renovación por hora',
-      dataIndex: 'renovaciones_h',
-      key: 'renovaciones_h',
-      width: 160,
-    },
-    {
-      title: 'Imágenes',
-      dataIndex: 'image_urls',
-      key: 'image_urls',
-      width: 130,
-      render: (imgs) => {
+    { title: 'N°', width: 60, fixed: 'left', render: (_, __, i) => (currentPage - 1) * pageSize + i + 1 },
+     // Nueva columna Fecha
+           {
+               title: 'FECHA',
+               dataIndex: 'measured_at',
+               key: 'measured_date',
+               sorter: (a, b) => dayjs(a.measured_at).unix() - dayjs(b.measured_at).unix(),
+               defaultSortOrder: 'descend',
+               width: 100, render: (t) => formatFechaUTC(t),
+           },
+           // Columna Hora (se conserva)
+           {
+               title: 'HORA',
+               dataIndex: 'measured_at',
+               key: 'measured_time',
+               sorter: (a, b) => dayjs(a.measured_at).unix() - dayjs(b.measured_at).unix(),
+               width: 70,
+               render: (t) => formatHoraUTC(t),
+           },
+    // NUEVA COLUMNA EN TABLA UI
+    { title: 'Área', dataIndex: 'area', width: 150, ellipsis: true },
+    { title: 'Local de trabajo', dataIndex: 'local_trabajo', width: 160, ellipsis: true },
+    { title: 'Tipo', dataIndex: 'tipo_ventilacion', width: 160, ellipsis: true },
+    { title: 'Temp °C', dataIndex: 'temperatura_seca_c', width: 100 },
+    { title: 'Vel (m/s)', dataIndex: 'vel_aire_ms', width: 100 },
+    { title: 'Caudal', dataIndex: 'caudal_m3h', width: 100 },
+    { title: 'Renovaciones/h', dataIndex: 'renovaciones_h', width: 140 },
+    { title: 'Imágenes', dataIndex: 'image_urls', width: 130, render: (imgs) => {
         const list = Array.isArray(imgs) ? imgs : [];
         if (!list.length) return <Text type="secondary">Ninguna</Text>;
-        return (
-          <Button
-            type="link"
-            size="small"
-            icon={<EyeOutlined />}
-            onClick={() => openImageViewer(list, 0)}
-          >
-            Ver imagen
-          </Button>
-        );
-      },
-    },
-    {
-      title: 'Ubicación',
-      dataIndex: 'location',
-      key: 'location',
-      width: 210,
-      render: (v) => renderLocation(v),
-    },
-    {
-      title: 'Registrado por',
-      dataIndex: 'created_by',
-      key: 'created_by',
-      width: 190,
-      fixed: 'right',
-      render: (v) => {
-        if (!v) return <Text type="secondary">N/A</Text>;
-        const display = usersById[v];
-        return display ? <Text>{display}</Text> : <Text type="secondary">{v}</Text>;
-      },
-    },
-    {
-      title: 'Acciones',
-      key: 'acciones',
-      width: 120,
-      fixed: 'right',
-      render: (_, record) => (
+        return <Button type="link" icon={<EyeOutlined />} onClick={() => openImageViewer(list, 0)} size="small">Ver imagen</Button>;
+    }},
+    { title: 'Ubicación', dataIndex: 'location', width: 210, render: renderLocation },
+    { title: 'Registrado por', dataIndex: 'created_by', width: 150, render: (v) => usersById[v] || v.slice(0,8) },
+    { title: 'Acciones', width: 120, fixed: 'right', render: (_, r) => (
         <Space size="small">
-          <Tooltip title="Editar">
-            <Button shape="circle" icon={<EditOutlined />} onClick={() => handleEdit(record)} />
-          </Tooltip>
-          <Tooltip title="Eliminar">
-            <Button
-              danger
-              shape="circle"
-              icon={<DeleteOutlined />}
-              onClick={() => handleDelete(record)}
-            />
-          </Tooltip>
+          <Tooltip title="Editar"><Button shape="circle" icon={<EditOutlined />} onClick={() => handleEdit(r)} /></Tooltip>
+          <Tooltip title="Eliminar"><Button danger shape="circle" icon={<DeleteOutlined />} onClick={() => handleDelete(r)} /></Tooltip>
         </Space>
-      ),
-    },
+    )}
   ];
 
   const safeEquipos = Array.isArray(equiposInfo) ? equiposInfo : [];
-  const firstRegistro = registros && registros.length > 0 ? registros[0] : null;
-
+  const firstReg = registros[0];
   const headerNombreEmpresa = proyectoInfo?.nombre || 'Cargando...';
-  const headerFechaInicio = firstRegistro?.created_at
-    ? dayjs(firstRegistro.created_at).format('DD/MM/YYYY')
-    : proyectoInfo?.created_at
-      ? dayjs(proyectoInfo.created_at).format('DD/MM/YYYY')
-      : 'N/A';
-  const headerFechaFin = '';
-  const headerEquipos =
-    safeEquipos.length > 0
-      ? safeEquipos.map((eq) => eq.nombre_equipo || 's/n').join(', ')
-      : 'Ninguno';
-  const headerModelos =
-    safeEquipos.length > 0 ? safeEquipos.map((eq) => eq.modelo || 's/n').join(', ') : 'N/A';
-  const headerSeries =
-    safeEquipos.length > 0 ? safeEquipos.map((eq) => eq.serie || 's/n').join(', ') : 'N/A';
+  const headerFechaInicio = firstReg?.created_at ? formatFechaUTC(firstReg.created_at) : (proyectoInfo?.created_at ? formatFechaUTC(proyectoInfo.created_at) : 'N/A');
+  const headerEquipos = safeEquipos.map(e => e.nombre_equipo).join(', ');
+  const headerModelos = safeEquipos.map(e => e.modelo).join(', ');
+  const headerSeries = safeEquipos.map(e => e.serie).join(', ');
 
   return (
     <>
       <Breadcrumb style={{ margin: '16px 0' }}>
-        <Breadcrumb.Item>
-          <Link to="/">
-            <HomeOutlined />
-          </Link>
-        </Breadcrumb.Item>
-        <Breadcrumb.Item>
-          <Link to="/proyectos">Proyectos</Link>
-        </Breadcrumb.Item>
-        <Breadcrumb.Item>
-          <Link to={`/proyectos/${projectId}/monitoreo`}>
-            <DatabaseOutlined /> Monitoreos
-          </Link>
-        </Breadcrumb.Item>
+        <Breadcrumb.Item><Link to="/"><HomeOutlined /></Link></Breadcrumb.Item>
+        <Breadcrumb.Item><Link to="/proyectos">Proyectos</Link></Breadcrumb.Item>
+        <Breadcrumb.Item><Link to={`/proyectos/${projectId}/monitoreo`}><DatabaseOutlined /> Monitoreos</Link></Breadcrumb.Item>
         <Breadcrumb.Item>{monitoreoInfo?.tipo_monitoreo || 'Ventilación'}</Breadcrumb.Item>
       </Breadcrumb>
 
       <Row justify="space-between" align="middle" style={{ marginBottom: 8 }}>
         <Col>
-          <Title level={2} style={{ color: PRIMARY_BLUE, marginBottom: 0 }}>
-            <LineChartOutlined /> Monitoreo de Ventilación
-          </Title>
-
-          {lastRtMsg && <div style={{ fontSize: 11, color: '#999' }}>Realtime: {lastRtMsg}</div>}
+          <Title level={2} style={{ color: PRIMARY_BLUE, marginBottom: 0 }}><LineChartOutlined /> Monitoreo de Ventilación</Title>
         </Col>
         <Col>
           <Space>
-            <Button onClick={() => navigate(`/proyectos/${projectId}/monitoreo`)}>
-              <ArrowLeftOutlined /> Volver a Monitoreos
+            <Button onClick={() => navigate(`/proyectos/${projectId}/monitoreo`)}><ArrowLeftOutlined /> Volver a Monitoreos</Button>
+            <Button icon={<FileExcelOutlined />} onClick={exportToExcel}>Exportar a Excel</Button>
+            <Button 
+               icon={<FilePdfOutlined />} 
+               onClick={handleOpenPdf}
+               style={{ backgroundColor: '#ff4d4f', color: 'white', borderColor: '#ff4d4f' }}
+            >
+               Reporte Fotos
             </Button>
-            <Button icon={<FileExcelOutlined />} onClick={exportToExcel}>
-              Exportar a Excel
-            </Button>
-            <Button type="primary" icon={<PlusOutlined />} onClick={handleAdd}>
-              Agregar Registro
-            </Button>
+            <Button type="primary" icon={<PlusOutlined />} onClick={handleAdd}>Agregar Registro</Button>
           </Space>
         </Col>
       </Row>
 
-      {/* buscador + selector */}
-      <Row justify="space-between" align="middle" style={{ marginBottom: 16, gap: 15 }}>
-        <Col flex="0 0 590px">
-          <Input.Search
-            allowClear
-            placeholder="Buscar por local, tipo, caudal..."
-            value={searchText}
-            onChange={(e) => {
-              setSearchText(e.target.value);
-              setCurrentPage(1);
-            }}
-          />
-        </Col>
-        <Col>
-          <Space>
-            <Text type="secondary">Ver:</Text>
-            <Select
-              value={pageSize}
-              onChange={(val) => {
-                setPageSize(val);
-                setCurrentPage(1);
-              }}
-              style={{ width: 90 }}
-            >
-              <Option value={5}>5</Option>
-              <Option value={10}>10</Option>
-              <Option value={20}>20</Option>
-              <Option value={50}>50</Option>
-            </Select>
-            <Text type="secondary">registros</Text>
-          </Space>
-        </Col>
+      <Row justify="space-between" style={{marginBottom: 16, gap: 15}}>
+         <Col flex="1"><Input.Search placeholder="Buscar..." value={searchText} onChange={e => setSearchText(e.target.value)} /></Col>
+         <Col>
+            <Space><Text type="secondary">Ver:</Text><Select value={pageSize} onChange={setPageSize} options={[{value:10},{value:20},{value:50}]} /></Space>
+         </Col>
       </Row>
 
       <Spin spinning={loadingHeader}>
         <Descriptions bordered size="small" column={2} style={{ marginBottom: 15 }}>
-          <Descriptions.Item label="NOMBRE DE LA EMPRESA">
-            {headerNombreEmpresa}
-          </Descriptions.Item>
-          <Descriptions.Item label="FECHA DE INICIO">{headerFechaInicio}</Descriptions.Item>
-          <Descriptions.Item label="FECHA DE FINALIZACION">{headerFechaFin}</Descriptions.Item>
+          <Descriptions.Item label="EMPRESA">{headerNombreEmpresa}</Descriptions.Item>
+          <Descriptions.Item label="FECHA">{headerFechaInicio}</Descriptions.Item>
           <Descriptions.Item label="EQUIPO">{headerEquipos}</Descriptions.Item>
-          <Descriptions.Item label="MODELO DEL EQUIPO">{headerModelos}</Descriptions.Item>
-          <Descriptions.Item label="SERIE DEL EQUIPO">{headerSeries}</Descriptions.Item>
+          <Descriptions.Item label="MODELO">{headerModelos}</Descriptions.Item>
+          <Descriptions.Item label="SERIE">{headerSeries}</Descriptions.Item>
         </Descriptions>
       </Spin>
 
       <Spin spinning={loading}>
-        <div style={{ overflowX: 'auto' }}>
-          <Table
-            className="tabla-general" // <--- Clase personalizada para estilos de tabla cabecera fija
-            size="small"
-            columns={columns}
-            dataSource={paginatedRegistros}
-            rowKey="id"
-            pagination={false}
-            scroll={{ x: 1400 }}
-          />
-        </div>
+        <Table className="tabla-general" size="small" columns={columns} dataSource={paginatedRegistros} rowKey="id" pagination={false} scroll={{ x: 1400 }} />
       </Spin>
 
-      {/* pie dinámico */}
-      <Row justify="space-between" align="middle" style={{ marginTop: 12 }}>
-        <Col>
-          {(() => {
-            const mostradosHastaAqui = Math.min(currentPage * pageSize, totalFiltered);
-            return (
-              <Text type="secondary">
-                Registros {mostradosHastaAqui} de {totalFiltered}
-              </Text>
-            );
-          })()}
-        </Col>
-        <Col>
-          <Pagination
-            current={currentPage}
-            pageSize={pageSize}
-            total={totalFiltered}
-            onChange={(p) => setCurrentPage(p)}
-            size="small"
-            showSizeChanger={false}
-          />
-        </Col>
+      <Row justify="space-between" style={{ marginTop: 12 }}>
+         <Col><Text type="secondary">Registros {Math.min(currentPage * pageSize, totalFiltered)} de {totalFiltered}</Text></Col>
+         <Col><Pagination current={currentPage} pageSize={pageSize} total={totalFiltered} onChange={setCurrentPage} size="small" showSizeChanger={false} /></Col>
       </Row>
 
-      {/* MODAL FORM */}
-      <Modal
-        title={
-          selectedRegistro ? 'Editar Registro de Ventilación' : 'Agregar Registro de Ventilación'
-        }
-        open={isFormModalVisible}
-        onOk={handleFormOk}
-        onCancel={handleFormCancel}
-        confirmLoading={saving}
-        destroyOnClose
-        width={650}
-      >
-        <Form
-          form={form}
-          layout="vertical"
-          name="ventilacionForm"
-          key={selectedRegistro ? `edit-${selectedRegistro.id}` : 'add'}
-          initialValues={
-            selectedRegistro
-              ? {
-                local_trabajo: selectedRegistro.local_trabajo,
-                tipo_ventilacion: selectedRegistro.tipo_ventilacion,
-                temperatura_seca_c: selectedRegistro.temperatura_seca_c,
-                vel_aire_ms: selectedRegistro.vel_aire_ms,
-                vel_aire_mh: selectedRegistro.vel_aire_mh,
-                area_ventilacion_m2: selectedRegistro.area_ventilacion_m2,
-                area_alto_m: selectedRegistro.area_alto_m,
-                area_ancho_m: selectedRegistro.area_ancho_m,
-                caudal_m3h: selectedRegistro.caudal_m3h,
-                vol_largo_m: selectedRegistro.vol_largo_m,
-                vol_ancho_m: selectedRegistro.vol_ancho_m,
-                vol_alto_m: selectedRegistro.vol_alto_m,
-                volumen_m3: selectedRegistro.volumen_m3,
-                renovaciones_h: selectedRegistro.renovaciones_h,
-                image_urls: Array.isArray(selectedRegistro.image_urls)
-                  ? selectedRegistro.image_urls.join(', ')
-                  : selectedRegistro.image_urls || '',
-                location:
-                  typeof selectedRegistro.location === 'object'
-                    ? JSON.stringify(selectedRegistro.location)
-                    : selectedRegistro.location || '',
-              }
-              : {}
-          }
-          preserve={false}
-        >
-          <Form.Item
-            name="local_trabajo"
-            label="Local de trabajo"
-            rules={[{ required: true, message: 'Campo obligatorio' }]}
-          >
-            <Input />
-          </Form.Item>
-          <Form.Item
-            name="tipo_ventilacion"
-            label="Tipo de ventilación"
-            rules={[{ required: true, message: 'Campo obligatorio' }]}
-          >
-            <Select placeholder="Selecciona un tipo">
-              {TIPOS_VENTILACION.map((t) => (
-                <Option key={t} value={t}>
-                  {t}
-                </Option>
-              ))}
-            </Select>
-          </Form.Item>
-          <Form.Item
-            name="temperatura_seca_c"
-            label="Temperatura seca (°C)"
-            rules={[{ required: true, message: 'Campo obligatorio' }]}
-          >
-            <InputNumber min={-20} max={60} style={{ width: '100%' }} />
-          </Form.Item>
-          <Form.Item
-            name="vel_aire_ms"
-            label="Velocidad aire (m/s)"
-            rules={[{ required: true, message: 'Campo obligatorio' }]}
-          >
-            <InputNumber min={0} step={0.01} style={{ width: '100%' }} />
-          </Form.Item>
-          <Form.Item name="vel_aire_mh" label="Velocidad aire (m/h)">
-            <InputNumber min={0} style={{ width: '100%' }} />
-          </Form.Item>
-          <Form.Item
-            name="area_ventilacion_m2"
-            label="Área de ventilación (m²)"
-            rules={[{ required: true, message: 'Campo obligatorio' }]}
-          >
-            <InputNumber min={0} step={0.01} style={{ width: '100%' }} />
-          </Form.Item>
-          <Form.Item name="area_alto_m" label="Área ALTO (m)">
-            <InputNumber min={0} step={0.01} style={{ width: '100%' }} />
-          </Form.Item>
-          <Form.Item name="area_ancho_m" label="Área ANCHO (m)">
-            <InputNumber min={0} step={0.01} style={{ width: '100%' }} />
-          </Form.Item>
-          <Form.Item
-            name="caudal_m3h"
-            label="Caudal de extracción o inyección de aire (m³/h)"
-            rules={[{ required: true, message: 'Campo obligatorio' }]}
-          >
-            <InputNumber min={0} step={0.01} style={{ width: '100%' }} />
-          </Form.Item>
-          <Form.Item name="vol_largo_m" label="Cálculo auxiliar - Largo (m)">
-            <InputNumber min={0} step={0.01} style={{ width: '100%' }} />
-          </Form.Item>
-          <Form.Item name="vol_ancho_m" label="Cálculo auxiliar - Ancho (m)">
-            <InputNumber min={0} step={0.01} style={{ width: '100%' }} />
-          </Form.Item>
-          <Form.Item name="vol_alto_m" label="Cálculo auxiliar - Altura (m)">
-            <InputNumber min={0} step={0.01} style={{ width: '100%' }} />
-          </Form.Item>
-          <Form.Item
-            name="volumen_m3"
-            label="Volumen del ambiente (m³)"
-            rules={[{ required: true, message: 'Campo obligatorio' }]}
-          >
-            <InputNumber min={0} step={0.01} style={{ width: '100%' }} />
-          </Form.Item>
-          <Form.Item
-            name="renovaciones_h"
-            label="N° renovación por hora"
-            rules={[{ required: true, message: 'Campo obligatorio' }]}
-          >
-            <InputNumber min={0} style={{ width: '100%' }} />
-          </Form.Item>
-          <Form.Item name="image_urls" label="URLs de imágenes (separadas por coma)">
-            <Input.TextArea rows={2} placeholder="https://... , https://..." />
-          </Form.Item>
-          <Form.Item name="location" label="Ubicación (texto o JSON)">
-            <Input placeholder='Ej: {"lat": -16.5, "lng": -68.1} ó texto' />
-          </Form.Item>
-        </Form>
+      {/* Modales */}
+      <Modal open={isFormModalVisible} onOk={handleFormOk} onCancel={handleFormCancel} title={selectedRegistro ? 'Editar' : 'Agregar'} destroyOnClose width={650}>
+          <Form form={form} layout="vertical" preserve={false} key={selectedRegistro ? selectedRegistro.id : 'new'}>
+              {/* CAMPO AREA NUEVO */}
+              <Form.Item name="area" label="Área" rules={[{required:true}]}><Input /></Form.Item>
+              <Form.Item name="local_trabajo" label="Local de trabajo" rules={[{required:true}]}><Input /></Form.Item>
+              <Form.Item name="tipo_ventilacion" label="Tipo de ventilación" rules={[{ required: true }]}><Select placeholder="Selecciona tipo">{TIPOS_VENTILACION.map(t=><Option key={t} value={t}>{t}</Option>)}</Select></Form.Item>
+              <Form.Item name="temperatura_seca_c" label="Temperatura seca (°C)" rules={[{ required: true }]}><InputNumber min={-20} max={60} style={{width:'100%'}} /></Form.Item>
+              <Form.Item name="vel_aire_ms" label="Velocidad aire (m/s)" rules={[{ required: true }]}><InputNumber min={0} step={0.01} style={{width:'100%'}} /></Form.Item>
+              <Form.Item name="vel_aire_mh" label="Velocidad aire (m/h)"><InputNumber min={0} style={{width:'100%'}} /></Form.Item>
+              <Form.Item name="area_ventilacion_m2" label="Área de ventilación (m²)" rules={[{ required: true }]}><InputNumber min={0} step={0.01} style={{width:'100%'}} /></Form.Item>
+              <Form.Item name="area_alto_m" label="Área ALTO (m)"><InputNumber min={0} step={0.01} style={{width:'100%'}} /></Form.Item>
+              <Form.Item name="area_ancho_m" label="Área ANCHO (m)"><InputNumber min={0} step={0.01} style={{width:'100%'}} /></Form.Item>
+              <Form.Item name="caudal_m3h" label="Caudal (m³/h)" rules={[{ required: true }]}><InputNumber min={0} step={0.01} style={{width:'100%'}} /></Form.Item>
+              <Form.Item name="vol_largo_m" label="Aux: Largo (m)"><InputNumber min={0} step={0.01} style={{width:'100%'}} /></Form.Item>
+              <Form.Item name="vol_ancho_m" label="Aux: Ancho (m)"><InputNumber min={0} step={0.01} style={{width:'100%'}} /></Form.Item>
+              <Form.Item name="vol_alto_m" label="Aux: Altura (m)"><InputNumber min={0} step={0.01} style={{width:'100%'}} /></Form.Item>
+              <Form.Item name="volumen_m3" label="Volumen (m³)" rules={[{ required: true }]}><InputNumber min={0} step={0.01} style={{width:'100%'}} /></Form.Item>
+              <Form.Item name="renovaciones_h" label="Renovaciones/h" rules={[{ required: true }]}><InputNumber min={0} style={{width:'100%'}} /></Form.Item>
+              <Form.Item name="image_urls" label="URLs de imágenes"><Input.TextArea rows={2} /></Form.Item>
+              <Form.Item name="location" label="Ubicación (texto/JSON)"><Input /></Form.Item>
+          </Form>
+      </Modal>
+      
+      <Modal open={imageViewerOpen} onCancel={() => setImageViewerOpen(false)} footer={null} width={720}>
+         {imageViewerList.length > 0 && <img src={imageViewerList[imageViewerIndex]} style={{width:'100%'}} />}
       </Modal>
 
-      {/* MODAL VER IMÁGENES */}
+      {/* === MODAL DE PDF === */}
       <Modal
-        open={imageViewerOpen}
-        onCancel={() => setImageViewerOpen(false)}
-        footer={
-          imageViewerList.length > 1
-            ? [
-              <Button
-                key="prev"
-                onClick={() =>
-                  setImageViewerIndex(
-                    (prev) => (prev - 1 + imageViewerList.length) % imageViewerList.length
-                  )
-                }
-              >
-                Anterior
-              </Button>,
-              <Button
-                key="next"
-                type="primary"
-                onClick={() =>
-                  setImageViewerIndex((prev) => (prev + 1) % imageViewerList.length)
-                }
-              >
-                Siguiente
-              </Button>,
-            ]
-            : null
-        }
-        width={720}
-        title="Imagen del registro"
+          title={pdfStep === 'selection' ? "Seleccionar Imágenes" : "Vista Previa PDF"}
+          open={isPdfModalVisible}
+          onCancel={() => setIsPdfModalVisible(false)}
+          width={1000}
+          style={{ top: 20 }}
+          footer={
+            pdfStep === 'selection' ? (
+                <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', alignItems: 'center' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <Text strong>Distribución:</Text>
+                        <Select defaultValue="2x4" style={{ width: 120 }} onChange={setPdfLayout}>
+                            <Option value="2x4">2 x 4</Option><Option value="2x3">2 x 3</Option>
+                            <Option value="3x3">3 x 3</Option><Option value="3x4">3 x 4</Option>
+                        </Select>
+                    </div>
+                    <Button type="primary" icon={<SaveOutlined />} onClick={handleSaveAndGenerate} loading={isSavingSelection}>
+                        Guardar y Generar PDF
+                    </Button>
+                </div>
+            ) : (
+                <Button onClick={() => setPdfStep('selection')}>
+                  <ArrowLeftOutlined /> Volver a Monitoreos
+                </Button>
+            )
+          }
       >
-        {imageViewerList.length ? (
-          <div style={{ textAlign: 'center' }}>
-            <img
-              src={imageViewerList[imageViewerIndex]}
-              alt="ventilación"
-              style={{ maxWidth: '100%', maxHeight: '60vh', objectFit: 'contain' }}
-            />
-            <div style={{ marginTop: 8 }}>
-              {imageViewerIndex + 1} / {imageViewerList.length}
-            </div>
+          <div style={{ height: '75vh', overflowY: 'auto', overflowX: 'hidden' }}>
+              {pdfStep === 'selection' && (
+                  <>
+                    <div style={{ marginBottom: 16, paddingBottom: 16, borderBottom: '1px solid #f0f0f0', display: 'flex', justifyContent: 'center', gap: 16 }}>
+                        <Button size="small" onClick={handleSelectAllRecords}>Seleccionar Todos</Button>
+                        <Button size="small" onClick={handleDeselectAllRecords}>Deseleccionar Todos</Button>
+                    </div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', justifyContent: 'center' }}>
+                      {registros.filter(r => getImagesArray(r).length > 0).map((r) => {
+                          const imgs = getImagesArray(r);
+                          const currentIdx = tempSelections[r.id] || 0;
+                          const isSelected = recordSelections[r.id] === true;
+                          return (
+                              <div key={r.id} style={{ 
+                                  width: '23%', 
+                                  border: isSelected ? '1px solid #ddd' : '1px dashed #999', 
+                                  opacity: isSelected ? 1 : 0.5,
+                                  padding: '8px', borderRadius: '8px', display: 'flex', flexDirection: 'column', alignItems: 'center', backgroundColor: '#fafafa', position: 'relative'
+                              }}>
+                                  <Checkbox checked={isSelected} onChange={() => handleRecordSelectionToggle(r.id)} style={{ position: 'absolute', top: 5, right: 5, zIndex: 20 }} />
+                                  <Text strong style={{ fontSize: 12 }}>{monitoreoInfo?.tipo_monitoreo}</Text>
+                                  <div style={{ position: 'relative', width: '100%', height: '150px', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff', border: '1px solid #eee', marginTop: 5 }}>
+                                      {imgs.length > 1 && <Button shape="circle" icon={<LeftOutlined />} size="small" style={{ position: 'absolute', left: 5 }} onClick={() => handlePrevImage(r.id, imgs.length)} />}
+                                      <img src={imgs[currentIdx]} style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
+                                      {imgs.length > 1 && <Button shape="circle" icon={<RightOutlined />} size="small" style={{ position: 'absolute', right: 5 }} onClick={() => handleNextImage(r.id, imgs.length)} />}
+                                      {imgs.length > 1 && <span style={{ position: 'absolute', bottom: 2, right: 5, fontSize: 10, background: 'rgba(255,255,255,0.7)' }}>{currentIdx + 1}/{imgs.length}</span>}
+                                  </div>
+                                  <Text style={{ fontSize: 11, marginTop: 5 }}>{r.local_trabajo}</Text>
+                              </div>
+                          );
+                      })}
+                    </div>
+                  </>
+              )}
+              {pdfStep === 'view' && (
+                  <PDFViewer width="100%" height="100%" showToolbar={true}>
+                      <ReporteFotografico 
+                          data={pdfData} 
+                          empresa={proyectoInfo?.descripcion || 'SIN DESC'} 
+                          layout={pdfLayout}
+                          tituloMonitoreo={monitoreoInfo?.tipo_monitoreo || 'Ventilación'} 
+                          descripcionProyecto={''}
+                      />
+                  </PDFViewer>
+              )}
           </div>
-        ) : (
-          <Text type="secondary">Sin imagen.</Text>
-        )}
       </Modal>
     </>
   );

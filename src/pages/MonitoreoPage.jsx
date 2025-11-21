@@ -3,39 +3,37 @@ import React, { useState, useMemo, useEffect } from 'react';
 import {
   Table, Input, Button, Modal, Form,
   Select, Typography, Tag, Space, Tooltip, message, Spin,
-  Progress, InputNumber, Slider, Popover,
+  Progress, InputNumber, Popover,
   DatePicker, Radio, Checkbox, Card, Divider,
   Row, Col
 } from 'antd';
 import {
   PlusOutlined, EyeOutlined, EditOutlined,
-  DeleteOutlined, SearchOutlined,
-  DatabaseOutlined,
-  DeleteTwoTone,
-  FilePdfOutlined, // <-- NUEVO ICONO
-  CalendarOutlined
+  SearchOutlined, DatabaseOutlined,
+  DeleteTwoTone, FilePdfOutlined
 } from '@ant-design/icons';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useMediaQuery } from '../hooks/useMediaQuery.js';
 import { supabase } from '../supabaseClient.js';
-import { PDFViewer } from '@react-pdf/renderer'; // <-- IMPORTANTE
-import { ReporteGeneralPDF } from '../components/ReporteGeneralPDF'; // <-- IMPORTANTE
+import { PDFViewer } from '@react-pdf/renderer';
+import { ReporteGeneralPDF } from '../components/ReporteGeneralPDF';
+import { useAuth } from '../context/AuthContext'; // usamos tu contexto
 
 const { RangePicker } = DatePicker;
 const { Title, Text } = Typography;
 const { Option } = Select;
 
 const tiposDeMonitoreo = [
-  "Iluminacion",
-  "Ventilacion",
-  "Ruido",
-  "Particulas suspendidas",
-  "Estres termico por calor",
-  "Estres termico por frio",
-  "Gases contaminantes",
-  "Ergonomia",
-  "Vibracion",
-  "Dosimetria"
+  'Iluminacion',
+  'Ventilacion',
+  'Ruido',
+  'Particulas suspendidas',
+  'Estres termico por calor',
+  'Estres termico por frio',
+  'Gases contaminantes',
+  'Ergonomia',
+  'Vibracion',
+  'Dosimetria'
 ];
 
 const defaultAddValues = {
@@ -48,6 +46,17 @@ const defaultAddValues = {
 const MonitoreosPage = () => {
   const { projectId } = useParams();
   const navigate = useNavigate();
+  const isMobile = useMediaQuery('(max-width: 768px)');
+  const PRIMARY_BLUE = '#2a8bb6';
+
+  // ===== PERMISOS (mapeados a tu permissions.js) =====
+  const { can } = useAuth();
+  const canViewList = can('monitors:read');      // ver tabla
+  const canViewDetails = can('monitors:read');   // ver modal de detalles
+  const canCreate = can('monitors:create');      // agregar
+  const canEdit = can('monitors:update');        // editar
+  const canDelete = can('monitors:delete');      // eliminar
+  const canGenerateReport = can('reports:export'); // generar PDF general
 
   const [monitoreos, setMonitoreos] = useState([]);
   const [medicionCounts, setMedicionCounts] = useState({});
@@ -56,7 +65,7 @@ const MonitoreosPage = () => {
   const [equiposList, setEquiposList] = useState([]);
   const [searchText, setSearchText] = useState('');
   const [pageSize, setPageSize] = useState(10);
-  const [currentPage, setCurrentPage] = useState(1); // <-- NUEVO
+  const [currentPage, setCurrentPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [isModalVisible, setIsModalVisible] = useState(false);
@@ -66,11 +75,9 @@ const MonitoreosPage = () => {
   const [isReportModalVisible, setIsReportModalVisible] = useState(false);
   const [reportLoading, setReportLoading] = useState(false);
   const [reportForm] = Form.useForm();
-  const [isPdfModalVisible, setIsPdfModalVisible] = useState(false); // Modal del visor
-  const [pdfReportData, setPdfReportData] = useState([]); // Datos para el reporte
+  const [isPdfModalVisible, setIsPdfModalVisible] = useState(false);
+  const [pdfReportData, setPdfReportData] = useState([]);
   const [form] = Form.useForm();
-  const isMobile = useMediaQuery('(max-width: 768px)');
-  const PRIMARY_BLUE = '#2a8bb6';
 
   const getTableNameFromTipo = (tipo) => {
     if (!tipo) return null;
@@ -89,83 +96,82 @@ const MonitoreosPage = () => {
   };
 
   const fetchMedicionCounts = async (monitoreosList, isBackground = false) => {
-    if (!monitoreosList || monitoreosList.length === 0) return;
-    
-    // Solo mostramos loading si NO es background
-    if (!isBackground) setLoadingMediciones(true);
+    if (!monitoreosList || monitoreosList.length === 0) return;
+    if (!isBackground) setLoadingMediciones(true);
 
-    try {
-      const countsPromises = monitoreosList.map(async (mon) => {
-        const tableName = getTableNameFromTipo(mon.tipo_monitoreo);
-        if (!tableName) return { monitoreoId: mon.id, count: 0 };
-        const { count, error } = await supabase
-          .from(tableName)
-          .select('id', { count: 'exact', head: true })
-          .eq('monitoreo_id', mon.id);
-        if (error) {
-          console.error(`Error contando mediciones para ${mon.id} en ${tableName}:`, error);
-          return { monitoreoId: mon.id, count: 0 };
-        }
-        return { monitoreoId: mon.id, count };
-      });
-      const results = await Promise.all(countsPromises);
-      const countsMap = results.reduce((acc, r) => { acc[r.monitoreoId] = r.count; return acc; }, {});
-      setMedicionCounts(countsMap);
-    } catch (error) {
-      console.error("Error general al cargar conteos:", error);
-      message.error("Error al cargar los conteos de mediciones.");
-    } finally {
-      // Solo apagamos loading si lo encendimos
-      if (!isBackground) setLoadingMediciones(false);
-    }
-  };
-
-  // ====== Cargar datos
-const fetchMonitoreos = async (isBackground = false) => {
-    if (!projectId) return;
-    
-    // Si es background, NO activamos el loading general (evita parpadeo de tabla)
-    if (!isBackground) setLoading(true);
-
-    try {
-      const { data, error } = await supabase
-        .from('monitoreos')
-        .select('*')
-        .eq('proyecto_id', projectId)
-        .order('created_at', { ascending: false });
-      if (error) throw error;
-      setMonitoreos(data);
-      // Pasamos isBackground para que los contadores se actualicen silenciosamente
-      await fetchMedicionCounts(data, isBackground);
-    } catch (error) {
-      console.error("Error loading monitoreos: ", error);
-      message.error("Error al cargar monitoreos: " + error.message);
-    } finally {
-      if (!isBackground) setLoading(false);
-    }
-  };
-
-  const fetchUsuarios = async () => {
     try {
-      const { data, error } = await supabase.from('profiles').select('id, nombre_completo, username');
-      if (error) throw error;
-      setUsuariosList(data);
+      const countsPromises = monitoreosList.map(async (mon) => {
+        const tableName = getTableNameFromTipo(mon.tipo_monitoreo);
+        if (!tableName) return { monitoreoId: mon.id, count: 0 };
+        const { count, error } = await supabase
+          .from(tableName)
+          .select('id', { count: 'exact', head: true })
+          .eq('monitoreo_id', mon.id);
+        if (error) {
+          console.error(`Error contando mediciones para ${mon.id} en ${tableName}:`, error);
+          return { monitoreoId: mon.id, count: 0 };
+        }
+        return { monitoreoId: mon.id, count };
+      });
+
+      const results = await Promise.all(countsPromises);
+      const countsMap = results.reduce((acc, r) => {
+        acc[r.monitoreoId] = r.count;
+        return acc;
+      }, {});
+      setMedicionCounts(countsMap);
     } catch (error) {
-      console.error("Error loading users for select: ", error);
+      console.error('Error general al cargar conteos:', error);
+      message.error('Error al cargar los conteos de mediciones.');
+    } finally {
+      if (!isBackground) setLoadingMediciones(false);
     }
   };
 
-  // ⬇️ Trae también el *modelo* del equipo
+  const fetchMonitoreos = async (isBackground = false) => {
+    if (!projectId) return;
+    if (!isBackground) setLoading(true);
+
+    try {
+      const { data, error } = await supabase
+        .from('monitoreos')
+        .select('*')
+        .eq('proyecto_id', projectId)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      setMonitoreos(data);
+      await fetchMedicionCounts(data, isBackground);
+    } catch (error) {
+      console.error('Error loading monitoreos: ', error);
+      message.error('Error al cargar monitoreos: ' + error.message);
+    } finally {
+      if (!isBackground) setLoading(false);
+    }
+  };
+
+  const fetchUsuarios = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('id, nombre_completo, username');
+      if (error) throw error;
+      setUsuariosList(data);
+    } catch (error) {
+      console.error('Error loading users for select: ', error);
+    }
+  };
+
   const fetchEquipos = async () => {
     try {
       const { data, error } = await supabase
         .from('equipos')
         .select('id, nombre_equipo, modelo, serie');
-      if (error) throw error;
+    if (error) throw error;
       setEquiposList(data);
     } catch (error) {
-      console.error("Error loading equipos for select: ", error);
-      message.error("No se pudo cargar la lista de equipos.");
+      console.error('Error loading equipos for select: ', error);
+      message.error('No se pudo cargar la lista de equipos.');
     }
   };
 
@@ -174,102 +180,143 @@ const fetchMonitoreos = async (isBackground = false) => {
     fetchEquipos();
   }, []);
 
-useEffect(() => {
-    if (!projectId) return;
+  useEffect(() => {
+    if (!projectId) return;
 
-    // Carga inicial normal (con loading)
-    fetchMonitoreos(false);
+    fetchMonitoreos(false);
 
-    // Función para manejar actualizaciones en tiempo real
-    const handleRealtimeUpdate = () => {
-      console.log("⚡ Cambio detectado: Actualizando contadores...");
-      // Llamamos con true para que sea silencioso
-      fetchMonitoreos(true);
-    };
+    const handleRealtimeUpdate = () => {
+      console.log('⚡ Cambio detectado: Actualizando contadores...');
+      fetchMonitoreos(true);
+    };
 
-    // 1. Suscripción a cambios en la configuración de monitoreos
-    const monitoreosChannel = supabase
-      .channel(`monitoreos_changes_${projectId}`)
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'monitoreos', filter: `proyecto_id=eq.${projectId}` },
-        handleRealtimeUpdate
-      )
-      .subscribe();
+    const monitoreosChannel = supabase
+      .channel(`monitoreos_changes_${projectId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'monitoreos',
+          filter: `proyecto_id=eq.${projectId}`
+        },
+        handleRealtimeUpdate
+      )
+      .subscribe();
 
-    // 2. Suscripción a cambios en las tablas de MEDICIONES
-    const tablasMediciones = [
-      'iluminacion', 'ventilacion', 'ruido', 'particulas', 'gases',
-      'estres_frio', 'estres_calor', 'vibracion', 'ergonomia', 'dosimetria'
-    ];
+    const tablasMediciones = [
+      'iluminacion',
+      'ventilacion',
+      'ruido',
+      'particulas',
+      'gases',
+      'estres_frio',
+      'estres_calor',
+      'vibracion',
+      'ergonomia',
+      'dosimetria'
+    ];
 
-    const medicionesChannel = supabase.channel(`mediciones_updates_${projectId}`);
+    const medicionesChannel = supabase.channel(`mediciones_updates_${projectId}`);
 
-    tablasMediciones.forEach(tbl => {
-      medicionesChannel.on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: tbl }, 
-        handleRealtimeUpdate // <--- Usamos la función optimizada
-      );
-    });
-    
-    medicionesChannel.subscribe();
+    tablasMediciones.forEach((tbl) => {
+      medicionesChannel.on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: tbl },
+        handleRealtimeUpdate
+      );
+    });
 
-    // Limpieza al desmontar
-    return () => {
-      supabase.removeChannel(monitoreosChannel);
-      supabase.removeChannel(medicionesChannel);
-    };
-    
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId]);
+    medicionesChannel.subscribe();
+
+    return () => {
+      supabase.removeChannel(monitoreosChannel);
+      supabase.removeChannel(medicionesChannel);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId]);
 
   const filteredData = useMemo(() => {
     if (!searchText) return monitoreos;
     const lower = searchText.toLowerCase();
-    return monitoreos.filter(item =>
-      (item.tipo_monitoreo && item.tipo_monitoreo.toLowerCase().includes(lower)) ||
-      (item.descripcion && item.descripcion.toLowerCase().includes(lower))
+    return monitoreos.filter(
+      (item) =>
+        (item.tipo_monitoreo &&
+          item.tipo_monitoreo.toLowerCase().includes(lower)) ||
+        (item.descripcion && item.descripcion.toLowerCase().includes(lower))
     );
   }, [monitoreos, searchText]);
 
-  const handleView = (mon) => { setSelectedMonitoreo(mon); setIsViewModalVisible(true); };
+  const handleView = (mon) => {
+    if (!canViewDetails) {
+      message.warning('No tienes permisos para ver detalles de los monitoreos.');
+      return;
+    }
+    setSelectedMonitoreo(mon);
+    setIsViewModalVisible(true);
+  };
 
   const handleOpenMediciones = (mon) => {
     if (!mon || !mon.id) return;
     const tipo = (mon.tipo_monitoreo || '').toLowerCase();
     const rutaMap = {
-      'iluminacion': 'iluminacion',
-      'ventilacion': 'ventilacion',
-      'ruido': 'ruido',
+      iluminacion: 'iluminacion',
+      ventilacion: 'ventilacion',
+      ruido: 'ruido',
       'particulas suspendidas': 'particulas',
       'gases contaminantes': 'gases',
       'estres termico por frio': 'estres-frio',
       'estres termico por calor': 'estres-calor',
-      'vibracion': 'vibracion',
-      'ergonomia': 'ergonomia',
-      'dosimetria': 'dosimetria'
+      vibracion: 'vibracion',
+      ergonomia: 'ergonomia',
+      dosimetria: 'dosimetria'
     };
     const rutaDestino = rutaMap[tipo];
-    if (rutaDestino) navigate(`/proyectos/${projectId}/monitoreo/${mon.id}/${rutaDestino}`);
-    else message.info(`No hay una página específica para "${mon.tipo_monitoreo}".`);
+    if (rutaDestino) {
+      navigate(`/proyectos/${projectId}/monitoreo/${mon.id}/${rutaDestino}`);
+    } else {
+      message.info(`No hay una página específica para "${mon.tipo_monitoreo}".`);
+    }
   };
 
-  const handleEdit = (mon) => { setSelectedMonitoreo(mon); setIsModalVisible(true); };
+  const handleEdit = (mon) => {
+    if (!canEdit) {
+      message.warning('No tienes permisos para editar monitoreos.');
+      return;
+    }
+    setSelectedMonitoreo(mon);
+    setIsModalVisible(true);
+  };
 
-  const handleDelete = async (mon) => {
+  const handleDelete = (mon) => {
+    if (!canDelete) {
+      message.warning('No tienes permisos para eliminar monitoreos.');
+      return;
+    }
     setSelectedMonitoreo(mon);
     const realizados = medicionCounts[mon.id] ?? 0;
     if (realizados > 0) {
-      message.error(`No se puede eliminar: Este monitoreo ya tiene ${realizados} mediciones registradas.`);
+      message.error(
+        `No se puede eliminar: este monitoreo ya tiene ${realizados} mediciones registradas.`
+      );
       setSelectedMonitoreo(null);
     } else {
       setIsDeleteModalVisible(true);
     }
   };
 
-  const handleAdd = () => { setSelectedMonitoreo(null); setIsModalVisible(true); };
-  const handleOk = () => { selectedMonitoreo ? handleEditOk() : handleAddOk(); };
+  const handleAdd = () => {
+    if (!canCreate) {
+      message.warning('No tienes permisos para crear nuevos monitoreos.');
+      return;
+    }
+    setSelectedMonitoreo(null);
+    setIsModalVisible(true);
+  };
+
+  const handleOk = () => {
+    selectedMonitoreo ? handleEditOk() : handleAddOk();
+  };
 
   const handleAddOk = async () => {
     setSaving(true);
@@ -281,20 +328,20 @@ useEffect(() => {
         descripcion: values.descripcion,
         usuarios_asignados: values.usuariosAsignados || [],
         equipos_asignados: values.equiposAsignados || [],
-        puntos: values.puntos,
+        puntos: values.puntos
       };
       const { error } = await supabase.from('monitoreos').insert(newMonitoreoData);
       if (error) throw error;
       setIsModalVisible(false);
       message.success('Monitoreo agregado exitosamente');
-      await fetchMonitoreos(); // ⬅️ MODIFICADO: refrescar inmediatamente para ver “0 / total” al instante
+      await fetchMonitoreos();
     } catch (errorInfo) {
       if (errorInfo.errorFields) {
         message.error('Por favor, revisa los campos requeridos.');
         console.error('Error de validación:', errorInfo);
       } else {
-        console.error("Error Supabase (Add): ", errorInfo);
-        message.error("Error al guardar monitoreo: " + errorInfo.message);
+        console.error('Error Supabase (Add): ', errorInfo);
+        message.error('Error al guardar monitoreo: ' + errorInfo.message);
       }
     } finally {
       setSaving(false);
@@ -310,7 +357,7 @@ useEffect(() => {
         descripcion: values.descripcion,
         usuarios_asignados: values.usuariosAsignados || [],
         equipos_asignados: values.equiposAsignados || [],
-        puntos: values.puntos,
+        puntos: values.puntos
       };
       const { error } = await supabase
         .from('monitoreos')
@@ -319,14 +366,14 @@ useEffect(() => {
       if (error) throw error;
       setIsModalVisible(false);
       message.success('Monitoreo actualizado exitosamente');
-      await fetchMonitoreos(); // ⬅️ MODIFICADO: refrescar inmediatamente para recalcular “realizados/total”
+      await fetchMonitoreos();
     } catch (errorInfo) {
       if (errorInfo.errorFields) {
         message.error('Por favor, revisa los campos requeridos.');
         console.error('Error de validación:', errorInfo);
       } else {
-        console.error("Error Supabase (Edit): ", errorInfo);
-        message.error("Error al actualizar monitoreo: " + errorInfo.message);
+        console.error('Error Supabase (Edit): ', errorInfo);
+        message.error('Error al actualizar monitoreo: ' + errorInfo.message);
       }
     } finally {
       setSaving(false);
@@ -343,114 +390,103 @@ useEffect(() => {
       if (error) throw error;
       setIsDeleteModalVisible(false);
       message.success('Monitoreo eliminado exitosamente');
-      await fetchMonitoreos(); // ⬅️ MODIFICADO: refrescar listado tras eliminar
+      await fetchMonitoreos();
     } catch (error) {
-      console.error("Error al eliminar monitoreo: ", error);
-      message.error("Error al eliminar monitoreo: " + error.message);
+      console.error('Error al eliminar monitoreo: ', error);
+      message.error('Error al eliminar monitoreo: ' + error.message);
     } finally {
       setSaving(false);
     }
   };
 
-  // Función para generar la data del reporte
   const handleGenerateReport = async () => {
+    if (!canGenerateReport) {
+      message.warning('No tienes permisos para generar reportes.');
+      return;
+    }
+
     try {
       const values = await reportForm.validateFields();
       setReportLoading(true);
 
-      // 1. Definir qué monitoreos vamos a procesar
       let monitoreosAProcesar = [];
       if (values.alcance === 'todos') {
-        monitoreosAProcesar = monitoreos; // Todos los de la tabla actual
+        monitoreosAProcesar = monitoreos;
       } else {
-        // Solo los IDs seleccionados
-        monitoreosAProcesar = monitoreos.filter(m => values.seleccionados.includes(m.id));
+        monitoreosAProcesar = monitoreos.filter((m) =>
+          values.seleccionados.includes(m.id)
+        );
       }
 
       if (monitoreosAProcesar.length === 0) {
-        message.warning("No hay monitoreos seleccionados para el reporte.");
+        message.warning('No hay monitoreos seleccionados para el reporte.');
         setReportLoading(false);
         return;
       }
 
-      // 2. Recopilar data de cada monitoreo
       const reporteFinal = [];
 
       for (const mon of monitoreosAProcesar) {
         const tableName = getTableNameFromTipo(mon.tipo_monitoreo);
-        
-        if (tableName) {
-          // Construir query base
-          let query = supabase
-            .from(tableName)
-            .select('*') // Traemos todos los campos (puedes especificar columnas si prefieres)
-            .eq('monitoreo_id', mon.id);
+        if (!tableName) continue;
 
-          // 3. Aplicar filtro de fechas si existe
-          if (values.fechas && values.fechas.length === 2) {
-            const start = values.fechas[0].startOf('day').toISOString();
-            const end = values.fechas[1].endOf('day').toISOString();
-            // Asumiendo que tus tablas tienen 'measured_at' o 'created_at'
-            // Ajusta el nombre de la columna de fecha según tus tablas
-            query = query.gte('measured_at', start).lte('measured_at', end); 
-          }
+        let query = supabase
+          .from(tableName)
+          .select('*')
+          .eq('monitoreo_id', mon.id);
 
-          const { data: mediciones, error } = await query;
+        if (values.fechas && values.fechas.length === 2) {
+          const start = values.fechas[0].startOf('day').toISOString();
+          const end = values.fechas[1].endOf('day').toISOString();
+          query = query.gte('measured_at', start).lte('measured_at', end);
+        }
 
-          if (error) {
-            console.error(`Error al traer datos de ${tableName}`, error);
-          } else {
-            // Solo agregamos al reporte si tiene mediciones (o si quieres mostrar vacíos, quita el if)
-            if (mediciones && mediciones.length > 0) {
-              reporteFinal.push({
-                titulo: mon.tipo_monitoreo,
-                descripcion: mon.descripcion,
-                puntosTotales: mon.puntos,
-                datos: mediciones,
-                config: {
-                  incluirFotos: values.incluirFotos,
-                  incluirEstadisticas: values.incluirEstadisticas,
-                  incluirObservaciones: values.incluirObservaciones
-                }
-              });
+        const { data: mediciones, error } = await query;
+        if (error) {
+          console.error(`Error al traer datos de ${tableName}`, error);
+          continue;
+        }
+
+        if (mediciones && mediciones.length > 0) {
+          reporteFinal.push({
+            titulo: mon.tipo_monitoreo,
+            descripcion: mon.descripcion,
+            puntosTotales: mon.puntos,
+            datos: mediciones,
+            config: {
+              incluirFotos: values.incluirFotos,
+              incluirEstadisticas: values.incluirEstadisticas,
+              incluirObservaciones: values.incluirObservaciones
             }
-          }
+          });
         }
       }
 
-      console.log("DATA PARA REPORTE:", reporteFinal);
-      
       if (reporteFinal.length === 0) {
-        message.info("No se encontraron mediciones en el rango de fechas seleccionado.");
+        message.info('No se encontraron mediciones en el rango de fechas seleccionado.');
       } else {
         message.success(`Reporte generado con ${reporteFinal.length} tipos de monitoreos.`);
-        
-        // --- CAMBIO AQUÍ: Guardamos la data y abrimos el modal del PDF ---
         setPdfReportData(reporteFinal);
-        setIsPdfModalVisible(true); // Abrimos el modal del visor
-        setIsReportModalVisible(false); // Cerramos el modal de configuración
+        setIsPdfModalVisible(true);
+        setIsReportModalVisible(false);
       }
-
-      setIsReportModalVisible(false);
-
     } catch (error) {
-      console.error("Error generando reporte:", error);
-      message.error("Error al generar el reporte.");
+      console.error('Error generando reporte:', error);
+      message.error('Error al generar el reporte.');
     } finally {
       setReportLoading(false);
     }
   };
 
   const columns = [
-  {
-  title: 'N°',
-  key: 'n',
-  width: 70,
-  fixed: isMobile ? 'left' : true,
-  render: (_text, _record, index) => (currentPage - 1) * pageSize + index + 1 // <-- USA currentPage
-},
-
-    
+    {
+      title: 'N°',
+      key: 'n',
+      width: 70,
+      fixed: isMobile ? 'left' : true,
+      render: (_text, _record, index) =>
+        (currentPage - 1) * pageSize + index + 1
+    },
     {
       title: 'Tipo de Monitoreo',
       dataIndex: 'tipo_monitoreo',
@@ -473,11 +509,11 @@ useEffect(() => {
       responsive: ['lg'],
       render: (userIds) => (
         <Space size={[0, 8]} wrap>
-          {(userIds || []).map(userId => {
-            const user = usuariosList.find(u => u.id === userId);
+          {(userIds || []).map((userId) => {
+            const user = usuariosList.find((u) => u.id === userId);
             return (
               <Tag color="blue" key={userId}>
-                {user ? (user.nombre_completo || user.username) : 'ID Desconocido'}
+                {user ? user.nombre_completo || user.username : 'ID Desconocido'}
               </Tag>
             );
           })}
@@ -491,11 +527,10 @@ useEffect(() => {
       responsive: ['lg'],
       render: (equipoIds) => (
         <Space size={[0, 8]} wrap>
-          {(equipoIds || []).map(equipoId => {
-            const eq = equiposList.find(e => e.id === equipoId);
+          {(equipoIds || []).map((equipoId) => {
+            const eq = equiposList.find((e) => e.id === equipoId);
             return (
               <Tag color="cyan" key={equipoId}>
-                {/* ⬇️ ahora muestra el MODELO */}
                 {eq ? `${eq.nombre_equipo} (${eq.modelo || 's/n'})` : 'ID Desconocido'}
               </Tag>
             );
@@ -522,7 +557,11 @@ useEffect(() => {
         return (
           <Popover content={content} title="Detalle de Puntos">
             <span style={{ cursor: 'pointer' }}>
-              {loadingMediciones ? <Spin size="small" /> : `${realizados} / ${totalPuntos}`}
+              {loadingMediciones ? (
+                <Spin size="small" />
+              ) : (
+                `${realizados} / ${totalPuntos}`
+              )}
             </span>
           </Popover>
         );
@@ -537,7 +576,10 @@ useEffect(() => {
         if (loadingMediciones) return <Spin size="small" />;
         const totalPuntos = record.puntos;
         const realizados = medicionCounts[id] ?? 0;
-        const percent = (totalPuntos && totalPuntos > 0) ? Math.round((realizados / totalPuntos) * 100) : 0;
+        const percent =
+          totalPuntos && totalPuntos > 0
+            ? Math.round((realizados / totalPuntos) * 100)
+            : 0;
         const displayPercent = percent > 100 ? 100 : percent;
         return <Progress percent={displayPercent} />;
       }
@@ -545,27 +587,70 @@ useEffect(() => {
     {
       title: 'Acciones',
       key: 'acciones',
-      align: 'right',
-      fixed: 'right', // ⬅️ ahora SIEMPRE fija/“inmóvil” a la derecha
-      width: isMobile ? 120 : 180,
+      align: 'center',
+      fixed: 'right',
+      width: isMobile ? 120 : 220,
       render: (_, record) => (
         <Space size="small">
-          <Tooltip title="Ver Detalles">
-            <Button type="primary" shape="circle" icon={<EyeOutlined />} onClick={() => handleView(record)} />
-          </Tooltip>
+          {canViewDetails && (
+            <Tooltip title="Ver Detalles">
+              <Button
+                type="primary"
+                shape="circle"
+                icon={<EyeOutlined />}
+                onClick={() => handleView(record)}
+              />
+            </Tooltip>
+          )}
+
           <Tooltip title={`Gestionar mediciones de ${record.tipo_monitoreo}`}>
-            <Button type="default" shape="circle" icon={<DatabaseOutlined />} onClick={() => handleOpenMediciones(record)} />
+            <Button
+              type="default"
+              shape="circle"
+              icon={<DatabaseOutlined />}
+              onClick={() => handleOpenMediciones(record)}
+            />
           </Tooltip>
-          <Tooltip title="Editar">
-            <Button type="default" shape="circle" icon={<EditOutlined />} onClick={() => handleEdit(record)} />
-          </Tooltip>
-          <Tooltip title="Eliminar">
-            <Button danger shape="circle" icon={<DeleteTwoTone twoToneColor="#ff4d4f" />} onClick={() => handleDelete(record)} />
-          </Tooltip>
+
+          {canEdit && (
+            <Tooltip title="Editar">
+              <Button
+                type="default"
+                shape="circle"
+                icon={<EditOutlined />}
+                onClick={() => handleEdit(record)}
+              />
+            </Tooltip>
+          )}
+
+          {canDelete && (
+            <Tooltip title="Eliminar">
+              <Button
+                danger
+                shape="circle"
+                icon={<DeleteTwoTone twoToneColor="#ff4d4f" />}
+                onClick={() => handleDelete(record)}
+              />
+            </Tooltip>
+          )}
         </Space>
       )
-    },
+    }
   ];
+
+  // Si no puede ver la lista de monitores, bloqueamos la página
+  if (!canViewList) {
+    return (
+      <>
+        <Title level={2} style={{ color: PRIMARY_BLUE, fontWeight: 'bold' }}>
+          📈 Gestión de Monitoreos
+        </Title>
+        <Text type="secondary">
+          No tienes permisos para ver la gestión de monitoreos de este proyecto.
+        </Text>
+      </>
+    );
+  }
 
   return (
     <>
@@ -589,31 +674,45 @@ useEffect(() => {
         <Input
           prefix={<SearchOutlined />}
           placeholder="Buscar por Tipo o Descripción..."
-          onChange={e => setSearchText(e.target.value)}
+          onChange={(e) => setSearchText(e.target.value)}
           style={{ minWidth: '250px', flex: 1 }}
         />
+
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <Text>Mostrar:</Text>
-          <Select value={pageSize} onChange={(value) => setPageSize(value)} style={{ width: 80 }}>
+          <Select
+            value={pageSize}
+            onChange={(value) => setPageSize(value)}
+            style={{ width: 80 }}
+          >
             <Option value={10}>10</Option>
             <Option value={20}>20</Option>
             <Option value={30}>30</Option>
           </Select>
         </div>
-        {/* BOTÓN DE REPORTE */}
-        <Button 
-          icon={<FilePdfOutlined />} 
-          onClick={() => {
-            reportForm.resetFields();
-            setIsReportModalVisible(true);
-          }}
-          style={{ backgroundColor: '#ff4d4f', color: 'white', borderColor: '#ff4d4f' }}
-        >
-          Generar Reporte
-        </Button>
-        <Button type="primary" icon={<PlusOutlined />} onClick={handleAdd}>
-          Agregar Nuevo Monitoreo
-        </Button>
+
+        {canGenerateReport && (
+          <Button
+            icon={<FilePdfOutlined />}
+            onClick={() => {
+              reportForm.resetFields();
+              setIsReportModalVisible(true);
+            }}
+            style={{
+              backgroundColor: '#ff4d4f',
+              color: 'white',
+              borderColor: '#ff4d4f'
+            }}
+          >
+            Generar Reporte
+          </Button>
+        )}
+
+        {canCreate && (
+          <Button type="primary" icon={<PlusOutlined />} onClick={handleAdd}>
+            Agregar Nuevo Monitoreo
+          </Button>
+        )}
       </div>
 
       {loading ? (
@@ -623,26 +722,30 @@ useEffect(() => {
       ) : (
         <div style={{ overflowX: 'auto' }}>
           <Table
-            className="tabla-general" // <--- Clase personalizada para estilos de tabla cabecera fija
+            className="tabla-general"
             columns={columns}
             dataSource={filteredData}
             scroll={{ x: true }}
-            pagination={{ 
+            pagination={{
               pageSize: pageSize,
-              current: currentPage,           // <-- NUEVO
-              onChange: (page) => setCurrentPage(page) // <-- NUEVO 
+              current: currentPage,
+              onChange: (page) => setCurrentPage(page)
             }}
             rowKey="id"
           />
         </div>
       )}
 
+      {/* MODAL AGREGAR / EDITAR */}
       <Modal
-        title={selectedMonitoreo ? "Editar Monitoreo" : "Agregar Nuevo Monitoreo"}
+        title={selectedMonitoreo ? 'Editar Monitoreo' : 'Agregar Nuevo Monitoreo'}
         open={isModalVisible}
         onOk={handleOk}
         confirmLoading={saving}
-        onCancel={() => { setIsModalVisible(false); setSelectedMonitoreo(null); }}
+        onCancel={() => {
+          setIsModalVisible(false);
+          setSelectedMonitoreo(null);
+        }}
         destroyOnHidden
       >
         <Form
@@ -651,13 +754,15 @@ useEffect(() => {
           layout="vertical"
           name="monitoreoForm"
           initialValues={
-            selectedMonitoreo ? {
-              tipoMonitoreo: selectedMonitoreo.tipo_monitoreo,
-              descripcion: selectedMonitoreo.descripcion,
-              usuariosAsignados: selectedMonitoreo.usuarios_asignados || [],
-              equiposAsignados: selectedMonitoreo.equipos_asignados || [],
-              puntos: selectedMonitoreo.puntos,
-            } : defaultAddValues
+            selectedMonitoreo
+              ? {
+                  tipoMonitoreo: selectedMonitoreo.tipo_monitoreo,
+                  descripcion: selectedMonitoreo.descripcion,
+                  usuariosAsignados: selectedMonitoreo.usuarios_asignados || [],
+                  equiposAsignados: selectedMonitoreo.equipos_asignados || [],
+                  puntos: selectedMonitoreo.puntos
+                }
+              : defaultAddValues
           }
           preserve={false}
         >
@@ -667,8 +772,10 @@ useEffect(() => {
             rules={[{ required: true, message: 'Selecciona un tipo de monitoreo' }]}
           >
             <Select placeholder="Selecciona un tipo">
-              {tiposDeMonitoreo.map(tipo => (
-                <Option key={tipo} value={tipo}>{tipo}</Option>
+              {tiposDeMonitoreo.map((tipo) => (
+                <Option key={tipo} value={tipo}>
+                  {tipo}
+                </Option>
               ))}
             </Select>
           </Form.Item>
@@ -688,7 +795,7 @@ useEffect(() => {
               placeholder="Selecciona uno o más usuarios"
               loading={usuariosList.length === 0}
             >
-              {usuariosList.map(user => (
+              {usuariosList.map((user) => (
                 <Option key={user.id} value={user.id}>
                   {user.nombre_completo || user.username}
                 </Option>
@@ -703,9 +810,8 @@ useEffect(() => {
               placeholder="Selecciona uno o más equipos"
               loading={equiposList.length === 0}
             >
-              {equiposList.map(equipo => (
+              {equiposList.map((equipo) => (
                 <Option key={equipo.id} value={equipo.id}>
-                  {/* ⬇️ etiqueta del selector usa MODELO */}
                   {equipo.nombre_equipo} ({equipo.modelo || 's/n'})
                 </Option>
               ))}
@@ -722,6 +828,7 @@ useEffect(() => {
         </Form>
       </Modal>
 
+      {/* MODAL DETALLES */}
       <Modal
         title="Detalles del Monitoreo"
         open={isViewModalVisible}
@@ -735,46 +842,70 @@ useEffect(() => {
       >
         {selectedMonitoreo && (
           <div>
-            <p><strong>Tipo:</strong> {selectedMonitoreo.tipo_monitoreo}</p>
-            <p><strong>Descripción:</strong> {selectedMonitoreo.descripcion || 'N/A'}</p>
+            <p>
+              <strong>Tipo:</strong> {selectedMonitoreo.tipo_monitoreo}
+            </p>
+            <p>
+              <strong>Descripción:</strong> {selectedMonitoreo.descripcion || 'N/A'}
+            </p>
             <p>
               <strong>Puntos:</strong>{' '}
-              {loadingMediciones ? <Spin size="small" /> : `${(medicionCounts[selectedMonitoreo.id] ?? 0)} / ${selectedMonitoreo.puntos}`}
+              {loadingMediciones ? (
+                <Spin size="small" />
+              ) : (
+                `${medicionCounts[selectedMonitoreo.id] ?? 0} / ${
+                  selectedMonitoreo.puntos
+                }`
+              )}
             </p>
-            <p><strong>Avance:</strong>{' '}
+            <p>
+              <strong>Avance:</strong>{' '}
               {loadingMediciones ? (
                 <Spin size="small" />
               ) : (
                 <Progress
                   percent={
-                    Math.round(((medicionCounts[selectedMonitoreo.id] ?? 0) / selectedMonitoreo.puntos) * 100) > 100
+                    Math.round(
+                      ((medicionCounts[selectedMonitoreo.id] ?? 0) /
+                        selectedMonitoreo.puntos) *
+                        100
+                    ) > 100
                       ? 100
-                      : Math.round(((medicionCounts[selectedMonitoreo.id] ?? 0) / selectedMonitoreo.puntos) * 100)
+                      : Math.round(
+                          ((medicionCounts[selectedMonitoreo.id] ?? 0) /
+                            selectedMonitoreo.puntos) *
+                            100
+                        )
                   }
                 />
               )}
             </p>
 
-            <p><strong>Usuarios:</strong></p>
+            <p>
+              <strong>Usuarios:</strong>
+            </p>
             <Space size={[0, 8]} wrap>
-              {(selectedMonitoreo.usuarios_asignados || []).map(userId => {
-                const user = usuariosList.find(u => u.id === userId);
+              {(selectedMonitoreo.usuarios_asignados || []).map((userId) => {
+                const user = usuariosList.find((u) => u.id === userId);
                 return (
                   <Tag color="blue" key={userId}>
-                    {user ? (user.nombre_completo || user.username) : 'ID Desconocido'}
+                    {user ? user.nombre_completo || user.username : 'ID Desconocido'}
                   </Tag>
                 );
               })}
             </Space>
 
-            <p style={{ marginTop: '10px' }}><strong>Equipos:</strong></p>
+            <p style={{ marginTop: '10px' }}>
+              <strong>Equipos:</strong>
+            </p>
             <Space size={[0, 8]} wrap>
-              {(selectedMonitoreo.equipos_asignados || []).map(equipoId => {
-                const eq = equiposList.find(e => e.id === equipoId);
+              {(selectedMonitoreo.equipos_asignados || []).map((equipoId) => {
+                const eq = equiposList.find((e) => e.id === equipoId);
                 return (
                   <Tag color="cyan" key={equipoId}>
-                    {/* ⬇️ en el modal también modelo */}
-                    {eq ? `${eq.nombre_equipo} (${eq.modelo || 's/n'})` : 'ID Desconocido'}
+                    {eq
+                      ? `${eq.nombre_equipo} (${eq.modelo || 's/n'})`
+                      : 'ID Desconocido'}
                   </Tag>
                 );
               })}
@@ -786,6 +917,7 @@ useEffect(() => {
         )}
       </Modal>
 
+      {/* MODAL CONFIRMAR ELIMINACIÓN */}
       <Modal
         title="Confirmar Eliminación"
         open={isDeleteModalVisible}
@@ -796,16 +928,19 @@ useEffect(() => {
         cancelText="Cancelar"
         okButtonProps={{ danger: true }}
       >
-        <p>¿Estás seguro de que deseas eliminar el monitoreo de "{selectedMonitoreo?.tipo_monitoreo}"?</p>
+        <p>
+          ¿Estás seguro de que deseas eliminar el monitoreo de "
+          {selectedMonitoreo?.tipo_monitoreo}"?
+        </p>
       </Modal>
 
-      {/* MODAL DE CONFIGURACIÓN DE REPORTE */}
+      {/* MODAL CONFIGURACIÓN DE REPORTE */}
       <Modal
         title={
-            <Space>
-                <FilePdfOutlined style={{ color: 'red' }} />
-                <span>Configuración de Reporte General</span>
-            </Space>
+          <Space>
+            <FilePdfOutlined style={{ color: 'red' }} />
+            <span>Configuración de Reporte General</span>
+          </Space>
         }
         open={isReportModalVisible}
         onCancel={() => setIsReportModalVisible(false)}
@@ -816,109 +951,136 @@ useEffect(() => {
         width={600}
       >
         <Form
-            form={reportForm}
-            layout="vertical"
-            initialValues={{
-                alcance: 'todos',
-                incluirFotos: true,
-                incluirEstadisticas: true,
-                incluirObservaciones: true
-            }}
+          form={reportForm}
+          layout="vertical"
+          initialValues={{
+            alcance: 'todos',
+            incluirFotos: true,
+            incluirEstadisticas: true,
+            incluirObservaciones: true
+          }}
         >
-            <Card size="small" style={{ marginBottom: 16, background: '#f5f5f5' }}>
-                <Text type="secondary" style={{ fontSize: 12 }}>
-                    Este asistente generará un PDF consolidado con la información de los monitoreos seleccionados.
-                </Text>
-            </Card>
+          <Card
+            size="small"
+            style={{ marginBottom: 16, background: '#f5f5f5' }}
+          >
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              Este asistente generará un PDF consolidado con la información de
+              los monitoreos seleccionados.
+            </Text>
+          </Card>
 
-            <Divider orientation="left">Alcance del Reporte</Divider>
-            
-            <Form.Item name="alcance" label="¿Qué monitoreos desea incluir?">
-                <Radio.Group style={{ width: '100%' }}>
-                    <Space direction="vertical" style={{ width: '100%' }}>
-                        <Radio value="todos">
-                            <strong>Todos los monitoreos del proyecto</strong>
-                            <div style={{ fontSize: 12, color: '#888', marginLeft: 24 }}>
-                                Incluye los {monitoreos.length} tipos listados actualmente.
-                            </div>
-                        </Radio>
-                        <Radio value="seleccion">
-                            <strong>Seleccionar específicos</strong>
-                        </Radio>
-                    </Space>
-                </Radio.Group>
-            </Form.Item>
+          <Divider orientation="left">Alcance del Reporte</Divider>
 
-            {/* Renderizado condicional: Si elige 'seleccion', mostramos el Select */}
-            <Form.Item
-                noStyle
-                shouldUpdate={(prevValues, currentValues) => prevValues.alcance !== currentValues.alcance}
-            >
-                {({ getFieldValue }) => 
-                    getFieldValue('alcance') === 'seleccion' ? (
-                        <Form.Item 
-                            name="seleccionados" 
-                            label="Seleccione los monitoreos"
-                            rules={[{ required: true, message: 'Seleccione al menos uno' }]}
-                        >
-                            <Select mode="multiple" placeholder="Ej: Iluminación, Ruido...">
-                                {monitoreos.map(m => (
-                                    <Option key={m.id} value={m.id}>{m.tipo_monitoreo}</Option>
-                                ))}
-                            </Select>
-                        </Form.Item>
-                    ) : null
-                }
-            </Form.Item>
+          <Form.Item name="alcance" label="¿Qué monitoreos desea incluir?">
+            <Radio.Group style={{ width: '100%' }}>
+              <Space direction="vertical" style={{ width: '100%' }}>
+                <Radio value="todos">
+                  <strong>Todos los monitoreos del proyecto</strong>
+                  <div
+                    style={{
+                      fontSize: 12,
+                      color: '#888',
+                      marginLeft: 24
+                    }}
+                  >
+                    Incluye los {monitoreos.length} tipos listados actualmente.
+                  </div>
+                </Radio>
+                <Radio value="seleccion">
+                  <strong>Seleccionar específicos</strong>
+                </Radio>
+              </Space>
+            </Radio.Group>
+          </Form.Item>
 
-            <Divider orientation="left">Filtros y Contenido</Divider>
+          <Form.Item
+            noStyle
+            shouldUpdate={(prevValues, currentValues) =>
+              prevValues.alcance !== currentValues.alcance
+            }
+          >
+            {({ getFieldValue }) =>
+              getFieldValue('alcance') === 'seleccion' ? (
+                <Form.Item
+                  name="seleccionados"
+                  label="Seleccione los monitoreos"
+                  rules={[
+                    { required: true, message: 'Seleccione al menos uno' }
+                  ]}
+                >
+                  <Select mode="multiple" placeholder="Ej: Iluminación, Ruido...">
+                    {monitoreos.map((m) => (
+                      <Option key={m.id} value={m.id}>
+                        {m.tipo_monitoreo}
+                      </Option>
+                    ))}
+                  </Select>
+                </Form.Item>
+              ) : null
+            }
+          </Form.Item>
 
-            <Row gutter={16}>
-                <Col span={12}>
-                    <Form.Item name="fechas" label="Rango de Fechas (Opcional)">
-                        <RangePicker 
-                            style={{ width: '100%' }} 
-                            placeholder={['Inicio', 'Fin']}
-                            format="DD/MM/YYYY"
-                        />
-                    </Form.Item>
-                </Col>
-                <Col span={12}>
-                    <Form.Item label="Opciones de contenido">
-                        <Space direction="vertical">
-                            <Form.Item name="incluirEstadisticas" valuePropName="checked" noStyle>
-                                <Checkbox>Incluir Gráficos/Estadísticas</Checkbox>
-                            </Form.Item>
-                            <Form.Item name="incluirFotos" valuePropName="checked" noStyle>
-                                <Checkbox>Incluir Evidencia Fotográfica</Checkbox>
-                            </Form.Item>
-                            <Form.Item name="incluirObservaciones" valuePropName="checked" noStyle>
-                                <Checkbox>Incluir Observaciones</Checkbox>
-                            </Form.Item>
-                        </Space>
-                    </Form.Item>
-                </Col>
-            </Row>
+          <Divider orientation="left">Filtros y Contenido</Divider>
+
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item name="fechas" label="Rango de Fechas (Opcional)">
+                <RangePicker
+                  style={{ width: '100%' }}
+                  placeholder={['Inicio', 'Fin']}
+                  format="DD/MM/YYYY"
+                />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item label="Opciones de contenido">
+                <Space direction="vertical">
+                  <Form.Item
+                    name="incluirEstadisticas"
+                    valuePropName="checked"
+                    noStyle
+                  >
+                    <Checkbox>Incluir Gráficos/Estadísticas</Checkbox>
+                  </Form.Item>
+                  <Form.Item
+                    name="incluirFotos"
+                    valuePropName="checked"
+                    noStyle
+                  >
+                    <Checkbox>Incluir Evidencia Fotográfica</Checkbox>
+                  </Form.Item>
+                  <Form.Item
+                    name="incluirObservaciones"
+                    valuePropName="checked"
+                    noStyle
+                  >
+                    <Checkbox>Incluir Observaciones</Checkbox>
+                  </Form.Item>
+                </Space>
+              </Form.Item>
+            </Col>
+          </Row>
         </Form>
       </Modal>
-      {/* MODAL VISOR DE PDF */}
+
+      {/* MODAL VISOR PDF */}
       <Modal
         title="Vista Previa del Reporte General"
         open={isPdfModalVisible}
         onCancel={() => setIsPdfModalVisible(false)}
-        footer={null} // Sin botones, el visor tiene su propia barra de descarga
+        footer={null}
         width={1000}
         style={{ top: 20 }}
         destroyOnClose
       >
         <div style={{ height: '80vh' }}>
-            <PDFViewer width="100%" height="100%" showToolbar={true}>
-                <ReporteGeneralPDF 
-                    data={pdfReportData}
-                    // Aquí puedes pasar info extra del proyecto si la tienes disponible en un estado
-                    proyectoInfo={{ nombre: 'Proyecto Actual' }} 
-                />
-            </PDFViewer>
+          <PDFViewer width="100%" height="100%" showToolbar={true}>
+            <ReporteGeneralPDF
+              data={pdfReportData}
+              proyectoInfo={{ nombre: 'Proyecto Actual' }}
+            />
+          </PDFViewer>
         </div>
       </Modal>
     </>

@@ -15,7 +15,7 @@ const PRIMARY_BLUE = '#2a8bb6';
 const HistorialPage = () => {
   return (
     <div>
-      <Title level={1}> <h1 style={{ color: PRIMARY_BLUE, fontWeight: 'bold' }}>📜 Historial o Reporte</h1></Title>
+      <Title level={1} style={{ color: PRIMARY_BLUE, fontWeight: 'bold' }}> 📜 Historial o Reporte</Title>
       <Typography.Text type="secondary">
         Tabla con los últimos registros y filtros de búsqueda.
       </Typography.Text>

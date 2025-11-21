@@ -1,48 +1,51 @@
-import React from 'react';
-import { Navigate, Outlet, useLocation } from 'react-router-dom';
-import { useAuth } from '../context/AuthContext'; // Importa el hook
-import { Spin } from 'antd'; // Importa Spin
+import React, { useEffect } from 'react';
+import { Navigate, Outlet, useNavigate } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
+import { Spin } from 'antd';
 
-/**
- * Componente Guardia:
- * 1. Muestra Spinner mientras se verifica el estado auth inicial.
- * 2. Si autenticado => Muestra contenido protegido (Outlet).
- * 3. Si NO autenticado => Redirige a /login.
- */
-const ProtectedRoute = () => {
-  // Obtiene estados del contexto Auth
-  const { isAuthenticated, loadingAuthState } = useAuth();
-  const location = useLocation();
+const FullscreenSpin = () => (
+  <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+    <Spin size="large" tip="Cargando sesión..." />
+  </div>
+);
 
-  // Log detallado para depuración en CADA renderizado
-  console.log(
-    `ProtectedRoute Check: Path=${location.pathname}, IsAuthenticated=${isAuthenticated}, Loading=${loadingAuthState}`
-  );
+export default function ProtectedRoute() {
+  // 1. TODOS los Hooks deben ir al principio
+  const { isAuthenticated, loadingAuthState, profile, logout } = useAuth();
+  const navigate = useNavigate();
 
-  // --- 1. Estado de Carga ---
-  // Mientras onAuthStateChanged no ha dado la primera respuesta
+  // 2. Efecto para auto-logout si el perfil pasa a inactivo
+  useEffect(() => {
+    if (!loadingAuthState && isAuthenticated && profile && profile.estado === 'inactivo') {
+      (async () => {
+        await logout();
+        navigate('/login?reason=inactivo', { replace: true });
+      })();
+    }
+  }, [loadingAuthState, isAuthenticated, profile, logout, navigate]);
+
+  // 3. Retornos condicionales
+
+  // Mientras Supabase verifica sesión
   if (loadingAuthState) {
-    console.log("ProtectedRoute: >>> WAITING for auth state...");
-    // Muestra un spinner ocupando toda la pantalla
-    return (
-      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
-        <Spin size="large" tip="Verificando sesión..." />
-      </div>
-    );
+    return <FullscreenSpin />;
   }
 
-  // --- 2. Estado Determinado (loadingAuthState es false aquí) ---
-  if (isAuthenticated) {
-    // Si SÍ está autenticado...
-    console.log("ProtectedRoute: >>> AUTHENTICATED. Rendering <Outlet />");
-    // ...renderiza el contenido anidado (DashboardLayout y sus hijos).
-    return <Outlet />;
-  } else {
-    // Si NO está autenticado...
-    console.log("ProtectedRoute: >>> NOT Authenticated. Navigating to /login");
-    // ...redirige a la página de login.
-    return <Navigate to="/login" replace state={{ from: location }} />;
+  // Si terminó de cargar y no hay usuario, mandar al login
+  if (!isAuthenticated) {
+    return <Navigate to="/login" replace />;
   }
-};
 
-export default ProtectedRoute;
+  // Si hay usuario pero el perfil aún está cargando
+  if (!profile) {
+    return <FullscreenSpin />;
+  }
+
+  // Si el perfil está marcado como inactivo, mostramos spinner mientras el efecto hace logout + redirect
+  if (profile.estado === 'inactivo') {
+    return <FullscreenSpin />;
+  }
+
+  // Si todo está bien, renderiza la aplicación
+  return <Outlet />;
+}

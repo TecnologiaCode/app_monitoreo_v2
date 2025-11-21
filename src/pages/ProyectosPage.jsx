@@ -13,8 +13,8 @@ import {
   Tooltip,
   message,
   Spin,
-  Progress, // <-- AGREGAR
-  Popover,  // <-- AGREGAR
+  Progress,
+  Popover,
 } from 'antd';
 import {
   PlusOutlined,
@@ -29,6 +29,8 @@ import {
 import { useMediaQuery } from '../hooks/useMediaQuery.js';
 import { supabase } from '../supabaseClient.js';
 import { Link, useNavigate } from 'react-router-dom';
+// 👇 NUEVO: traemos AuthContext para usar `can()`
+import { useAuth } from '../context/AuthContext';
 
 const { Title, Text, Paragraph } = Typography;
 const { Option } = Select;
@@ -37,17 +39,19 @@ const ProyectosPage = () => {
   const [proyectos, setProyectos] = useState([]);
   const [monitorCounts, setMonitorCounts] = useState({});
   const [loadingCounts, setLoadingCounts] = useState(false);
-const fetchProjectStats = async (projectIds, isBackground = false) => {
+
+  // 👇 NUEVO: obtenemos `can` desde Auth
+  const { can } = useAuth();
+
+  const fetchProjectStats = async (projectIds, isBackground = false) => {
     if (!projectIds || projectIds.length === 0) {
       setMonitorCounts({});
       return;
     }
-    
-    // Si es background, NO activamos el spinner de las celdas
+
     if (!isBackground) setLoadingCounts(true);
-    
+
     try {
-      // 1. Traer todos los monitoreos de estos proyectos
       const { data: allMonitoreos, error: monError } = await supabase
         .from('monitoreos')
         .select('id, proyecto_id, tipo_monitoreo, puntos')
@@ -80,34 +84,33 @@ const fetchProjectStats = async (projectIds, isBackground = false) => {
 
       for (const mon of allMonitoreos) {
         if (statsMap[mon.proyecto_id]) {
-            statsMap[mon.proyecto_id].countMonitoreos += 1;
-            statsMap[mon.proyecto_id].totalPuntos += (mon.puntos || 0);
+          statsMap[mon.proyecto_id].countMonitoreos += 1;
+          statsMap[mon.proyecto_id].totalPuntos += (mon.puntos || 0);
         }
 
         const tableName = getTableName(mon.tipo_monitoreo);
         if (tableName) {
-            const promise = supabase
-                .from(tableName)
-                .select('id', { count: 'exact', head: true })
-                .eq('monitoreo_id', mon.id)
-                .then(({ count }) => ({
-                    proyecto_id: mon.proyecto_id,
-                    count: count || 0
-                }));
-            measurementPromises.push(promise);
+          const promise = supabase
+            .from(tableName)
+            .select('id', { count: 'exact', head: true })
+            .eq('monitoreo_id', mon.id)
+            .then(({ count }) => ({
+              proyecto_id: mon.proyecto_id,
+              count: count || 0,
+            }));
+          measurementPromises.push(promise);
         }
       }
 
       const results = await Promise.all(measurementPromises);
 
       results.forEach(res => {
-          if (statsMap[res.proyecto_id]) {
-              statsMap[res.proyecto_id].realizados += res.count;
-          }
+        if (statsMap[res.proyecto_id]) {
+          statsMap[res.proyecto_id].realizados += res.count;
+        }
       });
 
       setMonitorCounts(statsMap);
-
     } catch (error) {
       console.error('Error cargando estadísticas:', error);
       if (!isBackground) message.error('Error al cargar estadísticas de avance.');
@@ -115,6 +118,7 @@ const fetchProjectStats = async (projectIds, isBackground = false) => {
       if (!isBackground) setLoadingCounts(false);
     }
   };
+
   const [searchText, setSearchText] = useState('');
   const [pageSize, setPageSize] = useState(10);
   const [loading, setLoading] = useState(true);
@@ -132,9 +136,8 @@ const fetchProjectStats = async (projectIds, isBackground = false) => {
   const [form] = Form.useForm();
   const isMobile = useMediaQuery('(max-width: 768px)');
   const PRIMARY_BLUE = '#2a8bb6';
-  const navigate = useNavigate(); // 👈 para redirigir
+  const navigate = useNavigate();
 
-  // ====== cargar conteos de monitoreos por proyecto
   const fetchMonitorCounts = async (projectIds) => {
     if (!projectIds || projectIds.length === 0) {
       setMonitorCounts({});
@@ -170,10 +173,9 @@ const fetchProjectStats = async (projectIds, isBackground = false) => {
     }
   };
 
-const fetchProyectos = async (isBackground = false) => {
-    // Si es background, NO activamos el loading principal (evita parpadeo)
+  const fetchProyectos = async (isBackground = false) => {
     if (!isBackground) {
-        setLoading(true);
+      setLoading(true);
     }
 
     try {
@@ -181,14 +183,13 @@ const fetchProyectos = async (isBackground = false) => {
         .from('proyectos')
         .select('*')
         .order('nombre', { ascending: true });
+
       if (error) throw error;
-      
+
       setProyectos(data);
-      
+
       const projectIds = data.map((p) => p.id);
-      // Pasamos isBackground a la función de estadísticas
-      await fetchProjectStats(projectIds, isBackground); 
-      
+      await fetchProjectStats(projectIds, isBackground);
     } catch (error) {
       console.error('Error al cargar proyectos (Supabase): ', error);
       if (!isBackground) message.error('Error al cargar los proyectos: ' + error.message);
@@ -197,36 +198,31 @@ const fetchProyectos = async (isBackground = false) => {
     }
   };
 
-useEffect(() => {
-    // 1. Carga inicial normal
+  useEffect(() => {
     fetchProyectos(false);
 
-    // 2. Función para recargar silenciosamente
     const handleRealtimeUpdate = () => {
-        console.log("⚡ Cambio detectado en el proyecto/mediciones...");
-        fetchProyectos(true); // true = background mode
+      console.log('⚡ Cambio detectado en el proyecto/mediciones...');
+      fetchProyectos(true);
     };
 
-    // Suscripción a cambios en PROYECTOS (ej: nuevo proyecto, cambio de estado)
     const proyectosChannel = supabase
       .channel('proyectos_main_list')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'proyectos' }, handleRealtimeUpdate)
       .subscribe();
 
-    // Suscripción a cambios en MONITOREOS (ej: se agregan puntos a un monitoreo)
     const monitoreosChannel = supabase
       .channel('monitoreos_global_list')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'monitoreos' }, handleRealtimeUpdate)
       .subscribe();
 
-    // Suscripción a cambios en MEDICIONES (ej: entra un registro de gas -> sube el avance)
     const tablasMediciones = [
-        'iluminacion', 'ventilacion', 'ruido', 'particulas', 'gases',
-        'estres_frio', 'estres_calor', 'vibracion', 'ergonomia', 'dosimetria'
+      'iluminacion', 'ventilacion', 'ruido', 'particulas', 'gases',
+      'estres_frio', 'estres_calor', 'vibracion', 'ergonomia', 'dosimetria',
     ];
     const medicionesChannel = supabase.channel('mediciones_global_updates');
     tablasMediciones.forEach(tbl => {
-        medicionesChannel.on('postgres_changes', { event: '*', schema: 'public', table: tbl }, handleRealtimeUpdate);
+      medicionesChannel.on('postgres_changes', { event: '*', schema: 'public', table: tbl }, handleRealtimeUpdate);
     });
     medicionesChannel.subscribe();
 
@@ -237,7 +233,6 @@ useEffect(() => {
     };
   }, []);
 
-  // ====== filtrado
   const filteredData = useMemo(() => {
     if (!searchText) return proyectos;
     return proyectos.filter(
@@ -248,8 +243,7 @@ useEffect(() => {
     );
   }, [proyectos, searchText]);
 
-  // ====== columnas
-const columns = [
+  const columns = [
     {
       title: 'Nombre del Proyecto',
       dataIndex: 'nombre',
@@ -266,14 +260,15 @@ const columns = [
       ellipsis: true,
       responsive: ['lg'],
     },
-    // --- COLUMNA MODIFICADA: Monitoreos ---
     {
       title: 'Monitoreos',
       key: 'monitorCount',
       dataIndex: 'id',
       width: 90,
       align: 'center',
-      sorter: (a, b) => (monitorCounts[a.id]?.countMonitoreos ?? 0) - (monitorCounts[b.id]?.countMonitoreos ?? 0),
+      sorter: (a, b) =>
+        (monitorCounts[a.id]?.countMonitoreos ?? 0) -
+        (monitorCounts[b.id]?.countMonitoreos ?? 0),
       render: (projectId) => {
         const count = monitorCounts[projectId]?.countMonitoreos ?? 0;
         return loadingCounts ? (
@@ -286,66 +281,63 @@ const columns = [
       },
       responsive: ['md'],
     },
-    // --- NUEVA COLUMNA: Puntos (Realizados / Total) ---
     {
-        title: 'Puntos (Total)',
-        key: 'puntos_avance',
-        dataIndex: 'id',
-        width: 110,
-        align: 'center',
-        render: (projectId) => {
-            if (loadingCounts) return <Spin size="small" />;
-            
-            const stats = monitorCounts[projectId] || { totalPuntos: 0, realizados: 0 };
-            const { totalPuntos, realizados } = stats;
-            const faltantes = totalPuntos - realizados;
+      title: 'Puntos (Total)',
+      key: 'puntos_avance',
+      dataIndex: 'id',
+      width: 110,
+      align: 'center',
+      render: (projectId) => {
+        if (loadingCounts) return <Spin size="small" />;
 
-            const content = (
-                <div>
-                  <Tag color="green">Realizados: {realizados}</Tag>
-                  <Tag color="red">Faltantes: {faltantes < 0 ? 0 : faltantes}</Tag>
-                </div>
-            );
+        const stats = monitorCounts[projectId] || { totalPuntos: 0, realizados: 0 };
+        const { totalPuntos, realizados } = stats;
+        const faltantes = totalPuntos - realizados;
 
-            return (
-                <Popover content={content} title="Progreso General">
-                    <span style={{ cursor: 'pointer', fontWeight: '500' }}>
-                        {realizados} / {totalPuntos}
-                    </span>
-                </Popover>
-            );
-        },
-        responsive: ['lg'],
+        const content = (
+          <div>
+            <Tag color="green">Realizados: {realizados}</Tag>
+            <Tag color="red">Faltantes: {faltantes < 0 ? 0 : faltantes}</Tag>
+          </div>
+        );
+
+        return (
+          <Popover content={content} title="Progreso General">
+            <span style={{ cursor: 'pointer', fontWeight: '500' }}>
+              {realizados} / {totalPuntos}
+            </span>
+          </Popover>
+        );
+      },
+      responsive: ['lg'],
     },
-    // --- NUEVA COLUMNA: Porcentaje de Avance ---
     {
-        title: 'Avance General',
-        key: 'porcentaje_general',
-        dataIndex: 'id',
-        width: 210,
-        render: (projectId) => {
-            if (loadingCounts) return <Spin size="small" />;
-            
-            const stats = monitorCounts[projectId] || { totalPuntos: 0, realizados: 0 };
-            const { totalPuntos, realizados } = stats;
-            
-            const percent = (totalPuntos && totalPuntos > 0) 
-                ? Math.round((realizados / totalPuntos) * 100) 
-                : 0;
-            
-            // Capar al 100% si se pasan
-            const displayPercent = percent > 100 ? 100 : percent;
+      title: 'Avance General',
+      key: 'porcentaje_general',
+      dataIndex: 'id',
+      width: 210,
+      render: (projectId) => {
+        if (loadingCounts) return <Spin size="small" />;
 
-            return (
-                <Progress 
-                    percent={displayPercent} 
-                    size="small" 
-                    status={displayPercent === 100 ? "success" : "active"}
-                />
-            );
-        }
+        const stats = monitorCounts[projectId] || { totalPuntos: 0, realizados: 0 };
+        const { totalPuntos, realizados } = stats;
+
+        const percent =
+          totalPuntos && totalPuntos > 0
+            ? Math.round((realizados / totalPuntos) * 100)
+            : 0;
+
+        const displayPercent = percent > 100 ? 100 : percent;
+
+        return (
+          <Progress
+            percent={displayPercent}
+            size="small"
+            status={displayPercent === 100 ? 'success' : 'active'}
+          />
+        );
+      },
     },
-
     {
       title: 'Estado',
       dataIndex: 'estado',
@@ -377,61 +369,76 @@ const columns = [
       },
       responsive: ['sm'],
     },
-
     {
       title: 'Acciones',
       key: 'acciones',
-      align: 'right',
+      align: 'center',
       fixed: 'right',
       width: 150,
       render: (_, record) => (
         <Space size="small">
-          <Tooltip title="Ver Detalles">
-            <Button
-              type="primary"
-              shape="circle"
-              icon={<EyeOutlined />}
-              onClick={() => handleView(record)}
-            />
-          </Tooltip>
-          <Tooltip title="Editar">
-            <Button
-              type="default"
-              shape="circle"
-              icon={<EditOutlined />}
-              onClick={() => handleEdit(record)}
-            />
-          </Tooltip>
-          {/* 👇 ESTE era el que no te redirigía */}
-          <Tooltip title="Permisos / Monitoreos">
-            <Button
-              shape="circle"
-              icon={<LockOutlined />}
-              onClick={() => handlePermisos(record)}
-              style={{ color: '#faad14', borderColor: '#faad14' }}
-            />
-          </Tooltip>
-          <Tooltip title="Eliminar">
-            <Button
-              danger
-              shape="circle"
-              icon={<DeleteOutlined />}
-              onClick={() => handleDelete(record)}
-              loading={saving && selectedProject?.id === record.id}
-            />
-          </Tooltip>
-          {/* Este ya redirige bien */}
-          <Tooltip title="Ver monitoreos del proyecto">
-            <Link to={`/proyectos/${record.id}/monitoreo`}>
-              <Button shape="circle" icon={<LineChartOutlined />} />
-            </Link>
-          </Tooltip>
+          {/* 👇 Ver detalle: requiere poder leer proyectos */}
+          {can('projects:read') && (
+            <Tooltip title="Ver Detalles">
+              <Button
+                type="primary"
+                shape="circle"
+                icon={<EyeOutlined />}
+                onClick={() => handleView(record)}
+              />
+            </Tooltip>
+          )}
+
+          {/* 👇 Editar: solo Admin / usuarios con projects:write */}
+          {can('projects:write') && (
+            <Tooltip title="Editar">
+              <Button
+                type="default"
+                shape="circle"
+                icon={<EditOutlined />}
+                onClick={() => handleEdit(record)}
+              />
+            </Tooltip>
+          )}
+
+          {/* 👇 Candado / Monitoreos: solo si puede leer monitoreos */}
+          {can('monitors:read') && (
+            <Tooltip title="Permisos / Monitoreos">
+              <Button
+                shape="circle"
+                icon={<LockOutlined />}
+                onClick={() => handlePermisos(record)}
+                style={{ color: '#faad14', borderColor: '#faad14' }}
+              />
+            </Tooltip>
+          )}
+
+          {/* 👇 Eliminar: solo Admin / users con projects:delete */}
+          {can('projects:delete') && (
+            <Tooltip title="Eliminar">
+              <Button
+                danger
+                shape="circle"
+                icon={<DeleteOutlined />}
+                onClick={() => handleDelete(record)}
+                loading={saving && selectedProject?.id === record.id}
+              />
+            </Tooltip>
+          )}
+
+          {/* 👇 Ir a monitoreos: también ligado a monitors:read */}
+          {can('monitors:read') && (
+            <Tooltip title="Ver monitoreos del proyecto">
+              <Link to={`/proyectos/${record.id}/monitoreo`}>
+                <Button shape="circle" icon={<LineChartOutlined />} />
+              </Link>
+            </Tooltip>
+          )}
         </Space>
       ),
     },
   ];
 
-  // ====== manejadores
   const handleView = (proyecto) => {
     setSelectedProject(proyecto);
     setIsViewModalVisible(true);
@@ -442,13 +449,9 @@ const columns = [
     setIsEditModalVisible(true);
   };
 
-  // 👇 AQUÍ EL CAMBIO: ahora el candado te lleva a MonitoreosPage
   const handlePermisos = (proyecto) => {
     if (!proyecto || !proyecto.id) return;
     navigate(`/proyectos/${proyecto.id}/monitoreo`);
-    // si más adelante quieres volver al modal, solo cambias esta línea por:
-    // setSelectedProject(proyecto);
-    // setIsPermisosModalVisible(true);
   };
 
   const handleDelete = async (proyecto) => {
@@ -599,12 +602,15 @@ const columns = [
             <Option value={100}>100</Option>
           </Select>
         </div>
-        <Button type="primary" icon={<PlusOutlined />} onClick={handleAdd}>
-          Agregar Nuevo Proyecto
-        </Button>
+
+        {/* 👇 Botón "Agregar" solo para Admin / projects:write */}
+        {can('projects:write') && (
+          <Button type="primary" icon={<PlusOutlined />} onClick={handleAdd}>
+            Agregar Nuevo Proyecto
+          </Button>
+        )}
       </div>
 
-      {/* Tabla o Spin */}
       {loading ? (
         <div style={{ textAlign: 'center', padding: '50px' }}>
           <Spin size="large" />
@@ -612,18 +618,18 @@ const columns = [
       ) : (
         <div style={{ overflowX: 'auto' }}>
           <Table
-            className='tabla-general'
+            className="tabla-general"
             columns={columns}
             dataSource={filteredData}
-            scroll={{ x: 'max-content' }}   // <-- NUEVO: habilita ancho por columnas
-            tableLayout="fixed"             // <-- NUEVO: respeta los width/minWidth
+            scroll={{ x: 'max-content' }}
+            tableLayout="fixed"
             pagination={{ pageSize: pageSize }}
             rowKey="id"
           />
         </div>
       )}
 
-      {/* Modales */}
+      {/* Modales (sin cambios de lógica) */}
       <Modal
         title="Agregar Nuevo Proyecto"
         open={isAddModalVisible}
@@ -706,7 +712,6 @@ const columns = [
         </Form>
       </Modal>
 
-      {/* este modal queda por si lo usas después */}
       <Modal
         title={`Permisos para "${selectedProject?.nombre}"`}
         open={isPermisosModalVisible}

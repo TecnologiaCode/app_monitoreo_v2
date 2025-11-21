@@ -7,6 +7,7 @@ import Header from './Header.jsx';
 import Sidebar from './Sidebar.jsx';
 import Footer from './Footer.jsx';
 import { useMediaQuery } from '../hooks/useMediaQuery.js';
+///import { useAuth } from '../context/AuthContext';
 
 const { Content } = Layout;
 

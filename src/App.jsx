@@ -1,14 +1,14 @@
+// src/App.jsx
 import React from 'react';
-import { ConfigProvider } from 'antd';   // ✅ Proveedor de configuración global
-import esES from 'antd/locale/es_ES';   // ✅ Idioma español (para Ant Design v5)
+import { ConfigProvider } from 'antd';
+import esES from 'antd/locale/es_ES';
 import { Routes, Route, Navigate, useParams } from 'react-router-dom';
 
-// Componentes Principales
 import LoginPage from './pages/LoginPage.jsx';
 import DashboardLayout from './components/DashboardLayout.jsx';
 import ProtectedRoute from './components/ProtectedRoute.jsx';
+import RequirePermission from './components/RequirePermission.jsx';
 
-// Páginas del Dashboard
 import DashboardPage from './pages/DashboardPage.jsx';
 import MapaPage from './pages/MapaPage.jsx';
 import UsuariosPage from './pages/UsuariosPage.jsx';
@@ -19,7 +19,7 @@ import ConfiguracionPage from './pages/ConfiguracionPage.jsx';
 import PerfilPage from './pages/PerfilPage.jsx';
 import ProyectosPage from './pages/ProyectosPage.jsx';
 
-// --- Páginas de Monitoreo y Mediciones ---
+// Monitoreos
 import MonitoreoPage from './pages/MonitoreoPage.jsx';
 import IluminacionPage from './pages/IluminacionPage.jsx';
 import VentilacionPage from './pages/VentilacionPage.jsx';
@@ -30,85 +30,197 @@ import EstresFrioPage from './pages/EstresFrioPage.jsx';
 import EstresCalorPage from './pages/EstresCalorPage.jsx';
 import VibracionPage from './pages/VibracionPage.jsx';
 import ErgonomiaPage from './pages/ErgonomiaPage.jsx';
-
-// --- 1. AÑADIR IMPORTACIÓN FALTANTE ---
-// Asegúrate de que el nombre del archivo (DosimetriaPage.jsx) sea correcto
 import DosimetriaPage from './pages/DosimetriaPage.jsx';
-// --- FIN IMPORTACIÓN ---
 
-
-
-// Componente simple para ver detalle de proyecto
 const ProyectoDetailPage = () => {
-    const { projectId } = useParams();
-    return (
-        <div>
-            <h2>Detalles del Proyecto</h2>
-            <p>Mostrando info para Proyecto ID: {projectId}</p>
-        </div>
-    );
+  const { projectId } = useParams();
+  return (
+    <div>
+      <h2>Detalles del Proyecto</h2>
+      <p>Mostrando info para Proyecto ID: {projectId}</p>
+    </div>
+  );
 };
 
 function App() {
-    return (
+  return (
     <ConfigProvider locale={esES}>
-<Routes>
-            {/* Ruta pública */}
-            <Route path="/login" element={<LoginPage />} />
+      <Routes>
+        <Route path="/login" element={<LoginPage />} />
 
-            {/* Rutas protegidas */}
-            <Route element={<ProtectedRoute />}>
-                {/* Layout principal del dashboard */}
-                <Route path="/" element={<DashboardLayout />}>
-                    {/* Rutas de primer nivel dentro del dashboard */}
-                    <Route index element={<DashboardPage />} />
-                    <Route path="historial" element={<HistorialPage />} />
-                    <Route path="usuarios" element={<UsuariosPage />} />
-                    <Route path="equipos" element={<EquiposPage />} />
-                    <Route path="configuracion" element={<ConfiguracionPage />} />
-                    <Route path="perfil" element={<PerfilPage />} />
-                    <Route path="proyectos" element={<ProyectosPage />} />
+        {/* Rutas protegidas por sesión */}
+        <Route element={<ProtectedRoute />}>
+          <Route path="/" element={<DashboardLayout />}>
+            <Route index element={<DashboardPage />} />
 
-                    {/* Proyecto específico */}
-                    <Route path="proyectos/:projectId" element={<ProyectoDetailPage />} />
-                    <Route path="proyectos/:projectId/mapa" element={<MapaPage />} />
-                    <Route
-                        path="proyectos/:projectId/monitoreo"
-                        element={<MonitoreoPage />}
-                    />
-                    <Route
-                        path="proyectos/:projectId/notificaciones"
-                        element={<NotificacionesPage />}
-                    />
+            {/* Usuarios: sólo quienes tengan users:read */}
+            <Route
+              path="usuarios"
+              element={
+                <RequirePermission perm="users:read">
+                  <UsuariosPage />
+                </RequirePermission>
+              }
+            />
 
-                    {/* --- Rutas de Mediciones (Anidadas) --- */}
-label="Rutas de Mediciones (Anidadas)"
-                    <Route path="proyectos/:projectId/monitoreo/:monitoreoId/iluminacion" element={<IluminacionPage />} />
-                    <Route path="proyectos/:projectId/monitoreo/:monitoreoId/ventilacion" element={<VentilacionPage />} />
-                    <Route path="proyectos/:projectId/monitoreo/:monitoreoId/particulas" element={<ParticulasPage />} />
-                    <Route path="proyectos/:projectId/monitoreo/:monitoreoId/gases" element={<GasesPage />} />
-                    <Route path="proyectos/:projectId/monitoreo/:monitoreoId/ruido" element={<RuidoPage />} />
-                    <Route path="proyectos/:projectId/monitoreo/:monitoreoId/estres-frio" element={<EstresFrioPage />} />
-                    <Route path="proyectos/:projectId/monitoreo/:monitoreoId/estres-calor" element={<EstresCalorPage />} />
-                    <Route path="proyectos/:projectId/monitoreo/:monitoreoId/vibracion" element={<VibracionPage />} />
-                    <Route path="proyectos/:projectId/monitoreo/:monitoreoId/ergonomia" element={<ErgonomiaPage />} />
-                    
-                    {/* --- 2. AÑADIR RUTA FALTANTE PARA DOSIMETRIA --- */}
-                    <Route
-                        path="proyectos/:projectId/monitoreo/:monitoreoId/dosimetria"
-                        element={<DosimetriaPage />}
-                    />
-                    {/* --- FIN RUTA AÑADIDA --- */}
+            {/* Historial: luego afinamos permisos (ej. reports:read / reports:export) */}
+            <Route path="historial" element={<HistorialPage />} />
 
-                    {/* Catch-all dentro del layout */}
-                    <Route path="*" element={<Navigate to="/" replace />} />
-                </Route>
-            </Route>
-        </Routes>
+            {/* 
+              ⚙️ Equipos: AHORA alineado con Sidebar.
+              ✅ Usamos 'equipments:read' (igual que en SidebarContent).
+              Admin pasa siempre por AuthContext.can()
+            */}
+            <Route
+              path="equipos"
+              element={
+                <RequirePermission perm="equipments:read"> {/* CAMBIO CLAVE */}
+                  <EquiposPage />
+                </RequirePermission>
+              }
+            />
+
+            <Route path="configuracion" element={<ConfiguracionPage />} />
+            <Route path="perfil" element={<PerfilPage />} />
+
+            {/* Proyectos (listado general). Permiso 'projects:read' */}
+            <Route
+              path="proyectos"
+              element={
+                <RequirePermission perm="projects:read">
+                  <ProyectosPage />
+                </RequirePermission>
+              }
+            />
+
+            {/* Detalle proyecto */}
+            <Route
+              path="proyectos/:projectId"
+              element={
+                <RequirePermission perm="projects:read">
+                  <ProyectoDetailPage />
+                </RequirePermission>
+              }
+            />
+
+            {/* Mapa / Monitoreos / Notificaciones del proyecto */}
+            <Route
+              path="proyectos/:projectId/mapa"
+              element={
+                <RequirePermission perm="projects:read">
+                  <MapaPage />
+                </RequirePermission>
+              }
+            />
+
+            <Route
+              path="proyectos/:projectId/monitoreo"
+              element={
+                <RequirePermission perm="monitors:read">
+                  <MonitoreoPage />
+                </RequirePermission>
+              }
+            />
+
+            <Route
+              path="proyectos/:projectId/notificaciones"
+              element={
+                <RequirePermission perm="projects:read">
+                  <NotificacionesPage />
+                </RequirePermission>
+              }
+            />
+
+            {/* Rutas de Mediciones */}
+            <Route
+              path="proyectos/:projectId/monitoreo/:monitoreoId/iluminacion"
+              element={
+                <RequirePermission perm="monitors:read">
+                  <IluminacionPage />
+                </RequirePermission>
+              }
+            />
+            <Route
+              path="proyectos/:projectId/monitoreo/:monitoreoId/ventilacion"
+              element={
+                <RequirePermission perm="monitors:read">
+                  <VentilacionPage />
+                </RequirePermission>
+              }
+            />
+            <Route
+              path="proyectos/:projectId/monitoreo/:monitoreoId/particulas"
+              element={
+                <RequirePermission perm="monitors:read">
+                  <ParticulasPage />
+                </RequirePermission>
+              }
+            />
+            <Route
+              path="proyectos/:projectId/monitoreo/:monitoreoId/gases"
+              element={
+                <RequirePermission perm="monitors:read">
+                  <GasesPage />
+                </RequirePermission>
+              }
+            />
+            <Route
+              path="proyectos/:projectId/monitoreo/:monitoreoId/ruido"
+              element={
+                <RequirePermission perm="monitors:read">
+                  <RuidoPage />
+                </RequirePermission>
+              }
+            />
+            <Route
+              path="proyectos/:projectId/monitoreo/:monitoreoId/estres-frio"
+              element={
+                <RequirePermission perm="monitors:read">
+                  <EstresFrioPage />
+                </RequirePermission>
+              }
+            />
+            <Route
+              path="proyectos/:projectId/monitoreo/:monitoreoId/estres-calor"
+              element={
+                <RequirePermission perm="monitors:read">
+                  <EstresCalorPage />
+                </RequirePermission>
+              }
+            />
+            <Route
+              path="proyectos/:projectId/monitoreo/:monitoreoId/vibracion"
+              element={
+                <RequirePermission perm="monitors:read">
+                  <VibracionPage />
+                </RequirePermission>
+              }
+            />
+            <Route
+              path="proyectos/:projectId/monitoreo/:monitoreoId/ergonomia"
+              element={
+                <RequirePermission perm="monitors:read">
+                  <ErgonomiaPage />
+                </RequirePermission>
+              }
+            />
+            <Route
+              path="proyectos/:projectId/monitoreo/:monitoreoId/dosimetria"
+              element={
+                <RequirePermission perm="monitors:read">
+                  <DosimetriaPage />
+                </RequirePermission>
+              }
+            />
+
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Route>
+        </Route>
+
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
     </ConfigProvider>
-        
-    );
+  );
 }
 
 export default App;
-

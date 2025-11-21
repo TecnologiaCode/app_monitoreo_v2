@@ -18,6 +18,8 @@ import {
   Col,
   Descriptions,
   Pagination,
+  Checkbox,
+  Divider
 } from 'antd';
 const { Option } = Select;
 import {
@@ -37,7 +39,7 @@ import { supabase } from '../supabaseClient.js';
 import dayjs from 'dayjs';
 import 'dayjs/locale/es';
 import utc from 'dayjs/plugin/utc';
-import XLSX from 'xlsx-js-style';
+import * as XLSX from 'xlsx';          // (tu versión nueva de Excel)
 import { FilePdfOutlined } from '@ant-design/icons'; // Icono para el botón
 import { PDFViewer } from '@react-pdf/renderer'; // El visor
 import { ReporteFotografico } from '../components/ReporteFotografico'; // Tu nuevo componente
@@ -319,6 +321,7 @@ const GasesPage = () => {
   const [isPdfModalVisible, setIsPdfModalVisible] = useState(false);
   const [pdfStep, setPdfStep] = useState('selection'); // 'selection' | 'view'
   const [pdfData, setPdfData] = useState([]);
+  const [recordSelections, setRecordSelections] = useState({});
   
   // Diccionario para controlar qué índice de imagen se muestra en el modal { registroId: indice }
   const [tempSelections, setTempSelections] = useState({});
@@ -327,9 +330,8 @@ const GasesPage = () => {
 
 // Función para preparar los datos y abrir el modal
 const handleOpenPdf = () => {
-    // Filtramos solo registros con imágenes
     const registrosConFotos = registros.filter(r => {
-       const imgs = getImagesArray(r); // Usaremos un helper abajo
+       const imgs = getImagesArray(r);
        return imgs.length > 0;
     });
 
@@ -338,17 +340,23 @@ const handleOpenPdf = () => {
         return;
     }
 
-    // Preparamos el estado inicial de selección basado en lo guardado en BD
     const initialSelections = {};
+    const initialRecordSelections = {}; // <--- LÍNEA NUEVA
+
     registrosConFotos.forEach(r => {
-        // Si el índice guardado es mayor que la cantidad de fotos actuales, reset a 0
+        // Lógica existente para el índice de la imagen
         const imgs = getImagesArray(r);
         const savedIndex = r.selected_image_index || 0;
         initialSelections[r.id] = savedIndex < imgs.length ? savedIndex : 0;
+        
+        // --- LÓGICA NUEVA ---
+        // Por defecto, marcamos todos los registros como seleccionados
+        initialRecordSelections[r.id] = true; 
     });
 
     setTempSelections(initialSelections);
-    setPdfStep('selection'); // Primero mostramos la selección
+    setRecordSelections(initialRecordSelections); // <--- LÍNEA NUEVA
+    setPdfStep('selection');
     setIsPdfModalVisible(true);
   };
 
@@ -375,70 +383,107 @@ const handleOpenPdf = () => {
       }));
   };
 
-// Guardar en Supabase y Generar PDF
-  const handleSaveAndGenerate = async () => {
-      setIsSavingSelection(true);
-      const loadingMsg = message.loading("Procesando imágenes...", 0);
-      
-      try {
-          const finalPdfData = [];
-          const registrosConFotos = registros.filter(r => getImagesArray(r).length > 0);
-          
-          // Usamos un bucle for...of para procesar una por una y ver errores
-          for (const r of registrosConFotos) {
-              const imgs = getImagesArray(r);
-              // Obtenemos el índice seleccionado (si no hay selección, es 0)
-              const selectedIdx = tempSelections[r.id] !== undefined ? tempSelections[r.id] : 0;
-              
-              // Validación de seguridad: si el índice es mayor a las fotos que existen, usa 0
-              const finalIdx = selectedIdx < imgs.length ? selectedIdx : 0;
-              const originalUrl = imgs[finalIdx];
-
-              // 1. Comprimimos
-              const compressedUrl = await compressImage(originalUrl);
-
-              finalPdfData.push({
-                  imageUrl: compressedUrl,
-                  area: r.area,
-                  puesto: r.puesto_trabajo,
-              });
-
-              // 2. Guardamos en BD
-              // Quitamos la condición 'if' temporalmente para forzar el guardado y ver si funciona
-              console.log(`Intentando actualizar ID: ${r.id} con índice: ${finalIdx}`);
-              
-              const { error, data } = await supabase
-                  .from('gases')
-                  .update({ selected_image_index: finalIdx })
-                  .eq('id', r.id)
-                  .select(); // .select() nos devuelve el dato actualizado para confirmar
-
-              if (error) {
-                  console.error("Error Supabase:", error.message);
-                  message.error(`Error guardando registro ${r.puesto_trabajo}`);
-              } else if (data && data.length === 0) {
-                  // ESTO ES CLAVE: Si entra aquí, es problema de RLS (Permisos)
-                  console.warn("Supabase devolvió 0 filas actualizadas. Revisa tus políticas RLS.");
-              } else {
-                  console.log("Guardado exitoso:", data);
-              }
-          }
-
-          // 3. Refrescamos la tabla visualmente
-          await fetchRegistros();
-
-          setPdfData(finalPdfData);
-          setPdfStep('view'); 
-          message.success("Proceso completado");
-
-      } catch (error) {
-          console.error("Error general:", error);
-          message.error("Ocurrió un error inesperado");
-      } finally {
-          loadingMsg();
-          setIsSavingSelection(false);
-      }
+  // --- FUNCIONES NUEVAS PARA MANEJAR CHECKBOX ---
+  const handleRecordSelectionToggle = (recordId) => {
+    setRecordSelections(prev => ({
+        ...prev,
+        [recordId]: !prev[recordId] // Invierte el valor (true/false)
+    }));
   };
+
+  const handleSelectAllRecords = () => {
+    const allSelected = {};
+    registros.filter(r => getImagesArray(r).length > 0).forEach(r => {
+        allSelected[r.id] = true;
+    });
+    setRecordSelections(allSelected);
+  };
+
+  const handleDeselectAllRecords = () => {
+    const allDeselected = {};
+    registros.filter(r => getImagesArray(r).length > 0).forEach(r => {
+        allDeselected[r.id] = false;
+    });
+    setRecordSelections(allDeselected);
+  };
+  // --- FIN DE FUNCIONES NUEVAS ---
+// Guardar en Supabase y Generar PDF
+const handleSaveAndGenerate = async () => {
+    setIsSavingSelection(true);
+    const loadingMsg = message.loading("Optimizando imágenes para el PDF...", 0);
+    
+    try {
+        // 1. Obtenemos solo los registros que tienen fotos
+        const registrosConFotos = registros.filter(r => getImagesArray(r).length > 0);
+
+        // --- 2. FILTRO NUEVO: Nos quedamos solo con los seleccionados ---
+        const registrosSeleccionados = registrosConFotos.filter(r => 
+            recordSelections[r.id] === true 
+        );
+
+        // Verificamos si el usuario desmarcó todo
+        if (registrosSeleccionados.length === 0) {
+            message.warning("No ha seleccionado ningún registro para el informe.");
+            setIsSavingSelection(false);
+            loadingMsg();
+            return; // Detenemos la ejecución
+        }
+        // --- FIN DEL FILTRO NUEVO ---
+
+        // 3. Preparamos las tareas (compresión y guardado)
+        const compressionTasks = [];
+        const supabaseTasks = [];
+        const dataForPdf = [];
+        let i = 0;
+
+        // 4. Iteramos SOBRE LOS REGISTROS SELECCIONADOS
+        for (const r of registrosSeleccionados) { 
+            const imgs = getImagesArray(r);
+            const selectedIdx = tempSelections[r.id] !== undefined ? tempSelections[r.id] : 0;
+            const finalIdx = selectedIdx < imgs.length ? selectedIdx : 0;
+            const originalUrl = imgs[finalIdx];
+            const codigo = `GAS-${String(i + 1).padStart(2, '0')}`;
+
+            compressionTasks.push(compressImage(originalUrl));
+            dataForPdf.push({
+                area: r.area,
+                puesto: r.puesto_trabajo,
+                codigo: codigo, 
+                fechaHora: `${formatFechaUTC(r.measured_at)} - ${formatHoraUTC(r.measured_at)}`
+            });
+
+            // Guardamos la selección de índice (esto no cambia)
+            supabaseTasks.push(
+                supabase.from('gases').update({ selected_image_index: finalIdx }).eq('id', r.id)
+            );
+            
+            i++;
+        }
+
+        // 5. Ejecutamos todo en paralelo
+        message.info(`Procesando... (Etapa 1/2: Comprimiendo ${registrosSeleccionados.length} imágenes)`);
+        const compressedUrls = await Promise.all(compressionTasks);
+
+        message.info('Procesando... (Etapa 2/2: Guardando selección)');
+        await Promise.all(supabaseTasks);
+
+        const finalPdfData = dataForPdf.map((item, index) => ({
+            ...item,
+            imageUrl: compressedUrls[index]
+        }));
+
+        setPdfData(finalPdfData);
+        setPdfStep('view'); 
+        message.success("Proceso completado");
+
+    } catch (error) {
+        console.error("Error general en paralelo:", error);
+        message.error("Ocurrió un error inesperado al comprimir las imágenes");
+    } finally {
+        loadingMsg();
+        setIsSavingSelection(false);
+    }
+};
 
   // Helper para comprimir imagen antes del PDF
 const compressImage = (url) => {
@@ -493,12 +538,12 @@ const compressImage = (url) => {
           if (em) throw em;
           setMonitoreoInfo(mon);
           const { data: proy, error: ep } = await supabase
-            .from('proyectos').select('id, nombre, created_at').eq('id', mon.proyecto_id).single();
+            .from('proyectos').select('id, nombre, created_at, descripcion').eq('id', mon.proyecto_id).single();
           if (ep) throw ep;
           setProyectoInfo(proy);
         } else if (projectId) {
           const { data: proy, error: ep } = await supabase
-            .from('proyectos').select('id, nombre, created_at').eq('id', projectId).single();
+            .from('proyectos').select('id, nombre, created_at, descripcion').eq('id', projectId).single();
           if (ep) throw ep;
           setProyectoInfo(proy);
         }
@@ -942,7 +987,7 @@ const compressImage = (url) => {
         <Col>
           <Space>
             <Button onClick={() => navigate(`/proyectos/${projectId}/monitoreo`)}>
-              <ArrowLeftOutlined /> Volver a Monitoreo
+              <ArrowLeftOutlined /> Volver a Monitoreos
             </Button>
             <Button icon={<FileExcelOutlined />} onClick={() => exportToExcel(registros, empresa)}>
               Exportar a Excel
@@ -1268,85 +1313,110 @@ footer={
           <div style={{ height: '75vh', overflowY: 'auto', overflowX: 'hidden' }}>
               
               {/* PASO 1: SELECCIÓN (HTML GRID) */}
+{/* PASO 1: SELECCIÓN (HTML GRID) */}
               {pdfStep === 'selection' && (
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', justifyContent: 'center' }}>
-                      {registros.filter(r => getImagesArray(r).length > 0).map((r, i) => {
-                          const imgs = getImagesArray(r);
-                          const currentIdx = tempSelections[r.id] || 0;
-                          
-                          return (
-                              <div key={r.id} style={{ 
-                                  width: '23%', // Aprox 4 columnas
-                                  border: '1px solid #ddd', 
-                                  padding: '8px',
-                                  borderRadius: '8px',
-                                  display: 'flex', 
-                                  flexDirection: 'column',
-                                  alignItems: 'center',
-                                  backgroundColor: '#fafafa'
-                              }}>
-                                  <Text strong style={{ fontSize: 12, marginBottom: 5, textAlign: 'center' }}>
-                                      {r.area || 'Sin Área'}
-                                  </Text>
-                                  
-                                  {/* Contenedor de Imagen con Flechas */}
-                                  <div style={{ position: 'relative', width: '100%', height: '150px', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff', border: '1px solid #eee' }}>
-                                      
-                                      {/* Flecha Izquierda (Solo si hay más de 1 foto) */}
-                                      {imgs.length > 1 && (
-                                          <Button 
-                                              shape="circle" 
-                                              icon={<LeftOutlined />} 
-                                              size="small" 
-                                              style={{ position: 'absolute', left: 5, zIndex: 10 }}
-                                              onClick={() => handlePrevImage(r.id, imgs.length)}
-                                          />
-                                      )}
+                  <>
+                    {/* --- CONTROLES DE SELECCIÓN NUEVOS --- */}
+                    <div style={{ 
+                        marginBottom: 16, 
+                        paddingBottom: 16, 
+                        borderBottom: '1px solid #f0f0f0', 
+                        display: 'flex', 
+                        justifyContent: 'center', 
+                        alignItems: 'center',
+                        gap: 16 
+                    }}>
+                        <Text strong>Selección de Registros:</Text>
+                        <Button size="small" onClick={handleSelectAllRecords}>Seleccionar Todos</Button>
+                        <Button size="small" onClick={handleDeselectAllRecords}>Deseleccionar Todos</Button>
+                    </div>
+                    {/* --- FIN DE CONTROLES NUEVOS --- */}
 
-                                      <img 
-                                          src={imgs[currentIdx]} 
-                                          alt="preview" 
-                                          style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
-                                      />
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', justifyContent: 'center' }}>
+                        {registros.filter(r => getImagesArray(r).length > 0).map((r, i) => {
+                            const imgs = getImagesArray(r);
+                            const currentIdx = tempSelections[r.id] || 0;
+                            const isSelected = recordSelections[r.id] === true; // <-- Leemos el estado
 
-                                      {/* Flecha Derecha */}
-                                      {imgs.length > 1 && (
-                                          <Button 
-                                              shape="circle" 
-                                              icon={<RightOutlined />} 
-                                              size="small" 
-                                              style={{ position: 'absolute', right: 5, zIndex: 10 }}
-                                              onClick={() => handleNextImage(r.id, imgs.length)}
-                                          />
-                                      )}
-                                      
-                                      {/* Indicador de página (ej: 1/3) */}
-                                      {imgs.length > 1 && (
-                                          <span style={{ position: 'absolute', bottom: 2, right: 5, fontSize: 10, background: 'rgba(255,255,255,0.7)', padding: '0 4px' }}>
-                                              {currentIdx + 1}/{imgs.length}
-                                          </span>
-                                      )}
-                                  </div>
+                            return (
+                                <div key={r.id} style={{ 
+                                    width: '23%',
+                                    border: isSelected ? '1px solid #ddd' : '1px dashed #ddd', 
+                                    padding: '8px',
+                                    borderRadius: '8px',
+                                    display: 'flex', 
+                                    flexDirection: 'column',
+                                    alignItems: 'center',
+                                    backgroundColor: isSelected ? '#fafafa' : '#fff',
+                                    opacity: isSelected ? 1 : 0.6, // <-- Efecto visual
+                                    transition: 'all 0.3s',
+                                    position: 'relative' // Para el checkbox
+                                }}>
+                                    
+                                    {/* --- CHECKBOX NUEVO --- */}
+                                    <Checkbox 
+                                        checked={isSelected} 
+                                        onChange={() => handleRecordSelectionToggle(r.id)}
+                                        style={{ position: 'absolute', top: 8, right: 8, zIndex: 20 }}
+                                    />
+                                    
+                                    <Text strong style={{ fontSize: 12, marginBottom: 5, textAlign: 'center' }}>
+                                        {r.area || 'Sin Área'}
+                                    </Text>
+                                    
+                                    {/* Contenedor de Imagen con Flechas (SIN CAMBIOS) */}
+                                    <div style={{ position: 'relative', width: '100%', height: '150px', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff', border: '1px solid #eee' }}>
+                                        {imgs.length > 1 && (
+                                            <Button 
+                                                shape="circle" 
+                                                icon={<LeftOutlined />} 
+                                                size="small" 
+                                                style={{ position: 'absolute', left: 5, zIndex: 10 }}
+                                                onClick={() => handlePrevImage(r.id, imgs.length)}
+                                            />
+                                        )}
+                                        <img 
+                                            src={imgs[currentIdx]} 
+                                            alt="preview" 
+                                            style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
+                                        />
+                                        {imgs.length > 1 && (
+                                            <Button 
+                                                shape="circle" 
+                                                icon={<RightOutlined />} 
+                                                size="small" 
+                                                style={{ position: 'absolute', right: 5, zIndex: 10 }}
+                                                onClick={() => handleNextImage(r.id, imgs.length)}
+                                            />
+                                        )}
+                                        {imgs.length > 1 && (
+                                            <span style={{ position: 'absolute', bottom: 2, right: 5, fontSize: 10, background: 'rgba(255,255,255,0.7)', padding: '0 4px' }}>
+                                                {currentIdx + 1}/{imgs.length}
+                                            </span>
+                                        )}
+                                    </div>
 
-                                  <Text style={{ fontSize: 11, marginTop: 5, textAlign: 'center', color: '#666' }}>
-                                      {r.puesto_trabajo}
-                                  </Text>
-                              </div>
-                          );
-                      })}
-                  </div>
+                                    <Text style={{ fontSize: 11, marginTop: 5, textAlign: 'center', color: '#666' }}>
+                                        {r.puesto_trabajo}
+                                    </Text>
+                                </div>
+                            );
+                        })}
+                    </div>
+                  </>
               )}
-
               {/* PASO 2: VISOR PDF REAL */}
-                {pdfStep === 'view' && (
-                      <PDFViewer width="100%" height="100%" showToolbar={true}>
-                          <ReporteFotografico 
-                              data={pdfData} 
-                              empresa={proyectoInfo?.nombre || 'Empresa'}
-                              layout={pdfLayout} // <--- AQUÍ PASAMOS LA SELECCIÓN
-                          />
-                      </PDFViewer>
-                )}
+{pdfStep === 'view' && (
+   <PDFViewer width="100%" height="100%" showToolbar={true}>
+       <ReporteFotografico 
+           data={pdfData} 
+           // CAMBIO AQUÍ: Pasamos la descripción como 'empresa'
+           empresa={proyectoInfo?.descripcion || 'SIN DESCRIPCIÓN DE PROYECTO'}
+           layout={pdfLayout}
+           tituloMonitoreo={monitoreoInfo?.tipo_monitoreo || 'Gases'} 
+       />
+   </PDFViewer>
+)}
           </div>
       </Modal>
     </>

@@ -1,4 +1,5 @@
 // src/pages/EstresCalorPage.jsx
+
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   Table,
@@ -19,6 +20,8 @@ import {
   Col,
   Descriptions,
   Pagination,
+  Checkbox, // <-- NUEVO
+  Divider   // <-- NUEVO
 } from 'antd';
 import {
   PlusOutlined,
@@ -30,112 +33,45 @@ import {
   ArrowLeftOutlined,
   FileExcelOutlined,
   EyeOutlined,
+  FilePdfOutlined, // <-- NUEVO
+  SaveOutlined,    // <-- NUEVO
+  LeftOutlined,    // <-- NUEVO
+  RightOutlined    // <-- NUEVO
 } from '@ant-design/icons';
+
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { supabase } from '../supabaseClient.js';
 
 import dayjs from 'dayjs';
 import 'dayjs/locale/es';
 import utc from 'dayjs/plugin/utc';
-import XLSX from 'xlsx-js-style';
+import * as XLSX from 'xlsx';          // (tu versión nueva de Excel)
+
+// IMPORTS DEL REPORTE FOTOGRÁFICO
+import { PDFViewer } from '@react-pdf/renderer';
+import { ReporteFotografico } from '../components/ReporteFotografico';
 
 dayjs.locale('es');
 dayjs.extend(utc);
 
 const { Title, Text } = Typography;
 const { Option } = Select;
+
 const PRIMARY_BLUE = '#2a8bb6';
 const TABLE_NAME = 'estres_calor';
-
-
-
-// =================================================================================
-// HELPERS DE FORMATO DE FECHA/HORA (¡IMPORTANTE!)
-// =================================================================================
-
-/**
- * Parsea una entrada de hora/fecha (potencialmente solo HH:mm) desde la zona horaria local
- * y la convierte a un string ISO (UTC) para Supabase.
- * @param {string} input - El valor del formulario (ej: "09:15" o "2025-11-06 09:15")
- * @param {string | null} originalTimestamp - El timestamp (UTC) existente, si se está editando.
- * @returns {string | null} - Un string ISO (UTC) o null.
- */
-const parseHoraLocalToUTC = (input, originalTimestamp = null) => {
-  // Si no hay entrada, es nulo
-  if (!input || typeof input !== 'string' || input.trim() === '') {
-    return null;
-  }
-
-  // 1. Determinar la fecha base (en zona local)
-  const baseDateLocal = originalTimestamp
-    ? dayjs(originalTimestamp).utc() // Si editamos: Convierte el UTC de la DB a local para usar su *fecha*
-    : dayjs().utc(); // Si creamos: Usa "hoy" en hora local
-
-  let hora, minuto, segundo;
-  let fechaConHoraLocal;
-
-  // 2. Intentar parsear la entrada del usuario (que está en hora local)
-  // Caso A: El usuario solo puso la hora (ej: "09:15" o "09:15:30")
-  const timeMatch = input.match(/^(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?$/);
-  if (timeMatch) {
-    hora = parseInt(timeMatch[1], 10);
-    minuto = parseInt(timeMatch[2], 10);
-    segundo = timeMatch[3] ? parseInt(timeMatch[3], 10) : 0;
-    
-    // Combina la fecha base local con la nueva hora/minuto/segundo local
-    fechaConHoraLocal = baseDateLocal.hour(hora).minute(minuto).second(segundo);
-  }
-  // Caso B: El usuario puso una fecha y hora completa (ej: "2025-11-06 09:15")
-  else {
-    // Dayjs parseará esta fecha-hora como local por defecto
-    fechaConHoraLocal = dayjs(input);
-    if (!fechaConHoraLocal.isValid()) {
-      console.warn('Timestamp inválido en el formulario:', input);
-      return null; // No es un formato válido
-    }
-  }
-
-  // 3. Convertir el objeto dayjs (que está en zona local) a un string ISO (UTC)
-  // .toISOString() SIEMPRE convierte a UTC (Z) para guardar en Supabase.
-  return fechaConHoraLocal.toISOString();
-};
 
 /* =========================================================
    Helpers
    ========================================================= */
 
-/**
- * MUESTRA la hora local.
- * Toma un timestamp UTC de la base de datos y lo formatea a la hora local del navegador.
- * @param {string} v - El timestamp UTC (ej: "2025-11-06T14:30:00+00:00")
- * @returns {string} - La hora en formato local (ej: "10:30")
- */
-
-
 const formatHoraUTC = (v) => {
   if (!v) return '';
-  try {
-    // .local() convierte el timestamp UTC a la zona horaria del navegador
-    return dayjs(v).utc().format('HH:mm');
-  } catch {
-    return String(v);
-  }
+  try { return dayjs(v).utc().format('HH:mm'); } catch { return String(v); }
 };
 
-/**
- * MUESTRA la fecha local.
- * Toma un timestamp UTC de la base de datos y lo formatea a la fecha local del navegador.
- * @param {string} v - El timestamp UTC
- * @returns {string} - La fecha en formato local (ej: "06/11/2025")
- */
 const formatFechaUTC = (v) => {
   if (!v) return '';
-  try {
-    // .local() convierte el timestamp UTC a la zona horaria del navegador
-    return dayjs(v).utc().format('DD/MM/YYYY');
-  } catch {
-    return String(v);
-  }
+  try { return dayjs(v).utc().format('DD/MM/YYYY'); } catch { return String(v); }
 };
 
 const renderLocation = (v) => {
@@ -143,24 +79,15 @@ const renderLocation = (v) => {
   if (typeof v === 'object') {
     const lat = v.lat ?? v.latitude ?? '';
     const lng = v.lng ?? v.longitude ?? '';
-    if (lat !== '' || lng !== '') {
-      return <span>lat: {lat}{lng !== '' ? `, lng: ${lng}` : ''}</span>;
-    }
+    if (lat !== '' || lng !== '') return <span>lat: {lat}{lng !== '' ? `, lng: ${lng}` : ''}</span>;
     const e = v.easting ?? '';
     const n = v.northing ?? '';
     const z = v.utm_zone ?? '';
-    if (e !== '' || n !== '' || z !== '') {
-      return <span>{`E: ${e}${n !== '' ? `, N: ${n}` : ''}${z ? `, Z: ${z}` : ''}`}</span>;
-    }
+    if (e !== '' || n !== '' || z !== '') return <span>{`E: ${e}${n !== '' ? `, N: ${n}` : ''}${z ? `, Z: ${z}` : ''}`}</span>;
     if (Array.isArray(v)) return v.join(', ');
     return JSON.stringify(v);
   }
-  try {
-    const parsed = JSON.parse(v);
-    return renderLocation(parsed);
-  } catch {
-    return <span>{String(v)}</span>;
-  }
+  try { const parsed = JSON.parse(v); return renderLocation(parsed); } catch { return <span>{String(v)}</span>; }
 };
 
 const toNumberOrString = (v) => {
@@ -171,126 +98,65 @@ const toNumberOrString = (v) => {
   return Number.isNaN(n) ? String(v) : n;
 };
 
+// Helper para obtener array de imagenes limpio
+const getImagesArray = (reg) => {
+    if (Array.isArray(reg.image_urls)) return reg.image_urls;
+    if (typeof reg.image_urls === 'string' && reg.image_urls.trim() !== '') {
+        try {
+            const parsed = JSON.parse(reg.image_urls);
+            if(Array.isArray(parsed)) return parsed;
+            return [reg.image_urls];
+        } catch {
+            return reg.image_urls.split(',').map(s => s.trim());
+        }
+    }
+    return [];
+};
+
 /* =========================================================
    Exportar a Excel
-   - Ahora escribe separadamente FECHA y HORA (columnas distintas)
    ========================================================= */
 const exportToExcel = (rows = [], header) => {
   try {
-    const empresaNombre =
-      typeof header === 'object' ? (header.empresa || '—') : (header || '—');
-    const fechaMonitoreo =
-      typeof header === 'object' ? (header.fecha || '') : '';
+    const empresaNombre = typeof header === 'object' ? (header.empresa || '—') : (header || '—');
+    const fechaMonitoreo = typeof header === 'object' ? (header.fecha || '') : '';
 
-    const B = {
-      top: { style: 'thin', color: { rgb: '000000' } },
-      bottom: { style: 'thin', color: { rgb: '000000' } },
-      left: { style: 'thin', color: { rgb: '000000' } },
-      right: { style: 'thin', color: { rgb: '000000' } },
-    };
-
-    const th = {
-      font: { bold: true },
-      alignment: { vertical: 'center', horizontal: 'center', wrapText: true },
-      fill: { fgColor: { rgb: 'FFFF00' } },
-      border: B,
-    };
-    const tdC = {
-      alignment: { vertical: 'center', horizontal: 'center', wrapText: true },
-      border: B,
-    };
-    const thL = {
-      font: { bold: true },
-      alignment: { vertical: 'center', horizontal: 'left', wrapText: true },
-      border: B,
-    };
-    const tdL = {
-      alignment: { vertical: 'center', horizontal: 'left', wrapText: true },
-      border: B,
-    };
+    const B = { top: { style: 'thin', color: { rgb: '000000' } }, bottom: { style: 'thin', color: { rgb: '000000' } }, left: { style: 'thin', color: { rgb: '000000' } }, right: { style: 'thin', color: { rgb: '000000' } } };
+    const th = { font: { bold: true }, alignment: { vertical: 'center', horizontal: 'center', wrapText: true }, fill: { fgColor: { rgb: 'FFFF00' } }, border: B };
+    const tdC = { alignment: { vertical: 'center', horizontal: 'center', wrapText: true }, border: B };
+    const thL = { font: { bold: true }, alignment: { vertical: 'center', horizontal: 'left', wrapText: true }, border: B };
+    const tdL = { alignment: { vertical: 'center', horizontal: 'left', wrapText: true }, border: B };
 
     const wsData = [];
+    wsData.push([{ v: 'PLANILLA DE MEDICIÓN DE ESTRÉS POR CALOR', s: { font: { bold: true, sz: 14 }, alignment: { vertical: 'center', horizontal: 'center' } } }]);
 
-    // Título (mergado a 19 columnas: ahora FECHA + HORA => contamos igual)
-    wsData.push([
-      {
-        v: 'PLANILLA DE MEDICIÓN DE ESTRÉS POR CALOR',
-        s: {
-          font: { bold: true, sz: 14 },
-          alignment: { vertical: 'center', horizontal: 'center' },
-        },
-      },
-    ]);
+    const siNo = (v) => (v === true || String(v) === 'true') ? 'Sí' : (v === false || String(v) === 'false') ? 'No' : '';
 
-    // Convierte boolean/strings booleanos a "Sí"/"No"
-    const siNo = (v) =>
-      (v === true || String(v) === 'true') ? 'Sí'
-        : (v === false || String(v) === 'false') ? 'No'
-          : '';
+    wsData.push([{ v: 'NOMBRE DE LA EMPRESA', s: thL }, { v: empresaNombre, s: tdL }, { v: 'FECHA DE MONITOREO', s: thL }, { v: fechaMonitoreo, s: tdL }]);
+    wsData.push([{ v: 'EQUIPO', s: thL }, { v: header?.equipo || '', s: tdL }, { v: 'MODELO DEL EQUIPO', s: thL }, { v: header?.modelos || '', s: tdL }]);
+    wsData.push([{ v: 'SERIE DEL EQUIPO', s: thL }, { v: header?.series || '', s: tdL }, { v: 'ÁREA DE TRABAJO', s: thL }, { v: header?.area || '', s: tdL }]);
+    wsData.push(['']); 
 
-    // Meta (4 columnas por fila)
     wsData.push([
-      { v: 'NOMBRE DE LA EMPRESA', s: thL },
-      { v: empresaNombre, s: tdL },
-      { v: 'FECHA DE MONITOREO', s: thL },
-      { v: fechaMonitoreo, s: tdL },
-    ]);
-    wsData.push([
-      { v: 'EQUIPO', s: thL },
-      { v: header?.equipo || '', s: tdL },
-      { v: 'MODELO DEL EQUIPO', s: thL },
-      { v: header?.modelos || '', s: tdL },
-    ]);
-    wsData.push([
-      { v: 'SERIE DEL EQUIPO', s: thL },
-      { v: header?.series || '', s: tdL },
-      { v: 'ÁREA DE TRABAJO', s: thL },
-      { v: header?.area || '', s: tdL },
-    ]);
-
-    wsData.push(['']); // espacio
-
-    // Encabezados de tabla (ahora FECHA y HORA por separado)
-    wsData.push([
-      { v: 'N°', s: th },
+      { v: 'N°', s: th }, 
+      { v: 'AREA DE TRABAJO', s: th }, // <-- CAMBIO: Columna Area añadida al excel (para consistencia con la tabla web)
       { v: 'PUESTO DE TRABAJO', s: th },
-      { v: 'INTERIOR/EXTERIOR', s: th },
-      { v: 'ACLIMATADO', s: th },
-      { v: 'FECHA', s: th },
-      { v: 'HORA DE MEDICIÓN', s: th },
-      { v: 'DESCRIPCIÓN DE ACTIVIDADES', s: th },
-      { v: 'TIPO DE ROPA DE TRABAJO CAV °C', s: th },
-      { v: 'CAPUCHA', s: th },
-      { v: 'TASA METABÓLICA W', s: th },
-
-      // Bloque resultados
-      { v: '%HR', s: th },
-      { v: 'VEL. VIENTO (m/s)', s: th },
-      { v: 'P (mmHg)', s: th },
-      { v: 'TEMP °C', s: th },
-      { v: 'WBGT °C', s: th },
-      { v: 'WB °C', s: th },
-      { v: 'GT °C', s: th },
-
-      // Finales en el orden solicitado
-      { v: 'IMÁGENES', s: th },        // URLs de imagen
-      { v: 'COORDENADAS UTM', s: th }, // location (JSON)
-      { v: 'OBSERVACIÓN', s: th },     // observaciones
+      { v: 'INTERIOR/EXTERIOR', s: th }, { v: 'ACLIMATADO', s: th },
+      { v: 'FECHA', s: th }, { v: 'HORA DE MEDICIÓN', s: th },
+      { v: 'DESCRIPCIÓN DE ACTIVIDADES', s: th }, { v: 'TIPO DE ROPA DE TRABAJO CAV °C', s: th },
+      { v: 'CAPUCHA', s: th }, { v: 'TASA METABÓLICA W', s: th },
+      { v: '%HR', s: th }, { v: 'VEL. VIENTO (m/s)', s: th }, { v: 'P (mmHg)', s: th }, { v: 'TEMP °C', s: th },
+      { v: 'WBGT °C', s: th }, { v: 'WB °C', s: th }, { v: 'GT °C', s: th },
+      { v: 'IMÁGENES', s: th }, { v: 'COORDENADAS UTM', s: th }, { v: 'OBSERVACIÓN', s: th },
     ]);
 
-    // Filas
     rows.forEach((r, i) => {
-      const imgs = Array.isArray(r.image_urls)
-        ? r.image_urls.join(', ')
-        : (r.image_urls || '');
-
-      const locText =
-        typeof r.location === 'object'
-          ? JSON.stringify(r.location)
-          : (r.location || '');
+      const imgs = Array.isArray(r.image_urls) ? r.image_urls.join(', ') : (r.image_urls || '');
+      const locText = typeof r.location === 'object' ? JSON.stringify(r.location) : (r.location || '');
 
       wsData.push([
         { v: i + 1, s: tdC },
+        { v: r.area || '', s: tdL }, // <-- Dato Area
         { v: r.puesto_trabajo || '', s: tdL },
         { v: r.interior_exterior || '', s: tdC },
         { v: siNo(r.aclimatado), s: tdC },
@@ -300,7 +166,6 @@ const exportToExcel = (rows = [], header) => {
         { v: r.tipo_ropa_cav || '', s: tdL },
         { v: siNo(r.capucha), s: tdC },
         { v: r.tasa_metabolica ?? '', s: tdL },
-
         { v: r.hr_percent ?? '', s: tdC },
         { v: r.vel_viento_ms ?? '', s: tdC },
         { v: r.presion_mmhg ?? '', s: tdC },
@@ -308,42 +173,16 @@ const exportToExcel = (rows = [], header) => {
         { v: r.wbgt_c ?? '', s: tdC },
         { v: r.wb_c ?? '', s: tdC },
         { v: r.gt_c ?? '', s: tdC },
-
-        { v: imgs, s: tdL },     // IMÁGENES
-        { v: locText, s: tdL },  // COORDENADAS UTM
-        { v: r.observaciones || '', s: tdL }, // OBSERVACIÓN
+        { v: imgs, s: tdL },
+        { v: locText, s: tdL },
+        { v: r.observaciones || '', s: tdL },
       ]);
     });
 
     const ws = XLSX.utils.aoa_to_sheet(wsData);
-
-    // Merge del título (fila 0, col 0 -> col 19) - ajustar a número de columnas (0..19 inclusive)
-    ws['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 19 } }];
-
-    // Ancho de columnas (incluyendo las 3 últimas)
-    ws['!cols'] = [
-      { wch: 6 },   // N°
-      { wch: 40 },  // Puesto
-      { wch: 16 },  // Int/Ext
-      { wch: 12 },  // Aclimatado
-      { wch: 12 },  // Fecha
-      { wch: 10 },  // Hora
-      { wch: 36 },  // Descripción
-      { wch: 28 },  // Tipo ropa
-      { wch: 12 },  // Capucha
-      { wch: 24 },  // Tasa metabólica
-      { wch: 10 },  // %HR
-      { wch: 16 },  // Viento
-      { wch: 12 },  // P
-      { wch: 10 },  // Temp
-      { wch: 10 },  // WBGT
-      { wch: 10 },  // WB
-      { wch: 10 },  // GT
-      { wch: 42 },  // IMÁGENES
-      { wch: 34 },  // COORDENADAS UTM
-      { wch: 34 },  // OBSERVACIÓN
-    ];
-
+    ws['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 20 } }]; // Título mergeado
+    ws['!cols'] = [{ wch: 6 }, { wch: 30 }, { wch: 30 }, { wch: 16 }, { wch: 12 }, { wch: 12 }, { wch: 10 }, { wch: 36 }, { wch: 28 }, { wch: 12 }, { wch: 24 }, { wch: 10 }, { wch: 16 }, { wch: 12 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 42 }, { wch: 34 }, { wch: 34 }];
+    
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Estrés Calor');
     XLSX.writeFile(wb, 'reporte_estres_calor.xlsx');
@@ -369,6 +208,8 @@ const EstresCalorPage = () => {
     equipo: '',
     modelos: '',
     series: '',
+    tipo_monitoreo: 'Estrés',
+    descripcion_proyecto: ''
   });
 
   const [rows, setRows] = useState([]);
@@ -389,34 +230,31 @@ const EstresCalorPage = () => {
   const [imageViewerList, setImageViewerList] = useState([]);
   const [imageViewerIndex, setImageViewerIndex] = useState(0);
 
+  // --- Estados PDF y Selección ---
+  const [isPdfModalVisible, setIsPdfModalVisible] = useState(false);
+  const [pdfStep, setPdfStep] = useState('selection'); 
+  const [pdfData, setPdfData] = useState([]);
+  const [tempSelections, setTempSelections] = useState({}); 
+  const [recordSelections, setRecordSelections] = useState({}); 
+  const [isSavingSelection, setIsSavingSelection] = useState(false);
+  const [pdfLayout, setPdfLayout] = useState('2x4');
+
   /* ---------- Cabecera (proyecto/monitoreo/equipos) ---------- */
   useEffect(() => {
     (async () => {
       setLoadingHeader(true);
       try {
         if (monitoreoId) {
-          const { data: m, error: em } = await supabase
-            .from('monitoreos')
-            .select('id, tipo_monitoreo, proyecto_id, equipos_asignados')
-            .eq('id', monitoreoId)
-            .single();
+          const { data: m, error: em } = await supabase.from('monitoreos').select('id, tipo_monitoreo, proyecto_id, equipos_asignados').eq('id', monitoreoId).single();
           if (em) throw em;
+          
+          const { data: p } = await supabase.from('proyectos').select('id, nombre, created_at, descripcion').eq('id', m.proyecto_id).single();
 
-          const { data: p } = await supabase
-            .from('proyectos')
-            .select('id, nombre, created_at')
-            .eq('id', m.proyecto_id)
-            .single();
-
-          // Equipos
           let equipos = [];
           let ids = m.equipos_asignados;
           if (typeof ids === 'string') { try { ids = JSON.parse(ids); } catch { ids = []; } }
           if (Array.isArray(ids) && ids.length) {
-            const { data: eq } = await supabase
-              .from('equipos')
-              .select('id, nombre_equipo, modelo, serie')
-              .in('id', ids);
+            const { data: eq } = await supabase.from('equipos').select('id, nombre_equipo, modelo, serie').in('id', ids);
             equipos = eq || [];
           }
 
@@ -427,43 +265,32 @@ const EstresCalorPage = () => {
             equipo: equipos.length ? equipos.map(e => e.nombre_equipo || 's/n').join(', ') : '',
             modelos: equipos.length ? equipos.map(e => e.modelo || 's/n').join(', ') : '',
             series: equipos.length ? equipos.map(e => e.serie || 's/n').join(', ') : '',
+            tipo_monitoreo: m.tipo_monitoreo,
+            descripcion_proyecto: p?.descripcion || ''
           }));
         } else if (projectId) {
-          const { data: p } = await supabase
-            .from('proyectos')
-            .select('id, nombre, created_at')
-            .eq('id', projectId)
-            .single();
-
+          const { data: p } = await supabase.from('proyectos').select('id, nombre, created_at, descripcion').eq('id', projectId).single();
           setHeaderInfo((h) => ({
             ...h,
             empresa: p?.nombre || '—',
             fecha: p?.created_at ? dayjs(p.created_at).format('DD/MM/YYYY') : '—',
+            descripcion_proyecto: p?.descripcion || ''
           }));
         }
-      } catch (e) {
-        console.error('Header error:', e);
-      } finally {
-        setLoadingHeader(false);
-      }
+      } catch (e) { console.error('Header error:', e); } finally { setLoadingHeader(false); }
     })();
   }, [projectId, monitoreoId]);
 
-  /* ---------- Traer filas (corrige filtro para registros antiguos) ---------- */
-  const fetchRows = async () => {
-    setLoading(true);
+  /* --------- Traer filas (ASCENDENTE POR FECHA) --------- */
+  const fetchRows = async (isBackground = false) => {
+    if (!isBackground) setLoading(true);
     try {
-      let q = supabase.from(TABLE_NAME).select('*').order('inserted_at', { ascending: true });
+      // CAMBIO AQUÍ: Orden ASCENDENTE por fecha
+      let q = supabase.from(TABLE_NAME).select('*').order('measured_at', { ascending: true });
 
-      // Si tienes filas con solo proyecto_id (antiguas) o solo monitoreo_id,
-      // usa .or(...) para no excluirlas.
-      if (monitoreoId && projectId) {
-        q = q.or(`monitoreo_id.eq.${monitoreoId},proyecto_id.eq.${projectId}`);
-      } else if (monitoreoId) {
-        q = q.eq('monitoreo_id', monitoreoId);
-      } else if (projectId) {
-        q = q.eq('proyecto_id', projectId);
-      }
+      if (monitoreoId && projectId) { q = q.or(`monitoreo_id.eq.${monitoreoId},proyecto_id.eq.${projectId}`); }
+      else if (monitoreoId) { q = q.eq('monitoreo_id', monitoreoId); }
+      else if (projectId) { q = q.eq('proyecto_id', projectId); }
 
       const { data, error } = await q;
       if (error) throw error;
@@ -472,81 +299,117 @@ const EstresCalorPage = () => {
         let imageUrls = [];
         if (Array.isArray(r.image_urls)) imageUrls = r.image_urls;
         else if (typeof r.image_urls === 'string' && r.image_urls.trim() !== '') {
-          imageUrls = r.image_urls.split(',').map((s) => s.trim());
+          try {
+              const parsed = JSON.parse(r.image_urls);
+              if(Array.isArray(parsed)) imageUrls = parsed;
+              else imageUrls = r.image_urls.split(',').map((s) => s.trim());
+          } catch {
+              imageUrls = r.image_urls.split(',').map((s) => s.trim());
+          }
         }
-        return {
-          ...r,
-          hr_percent: toNumberOrString(r.hr_percent),
-          vel_viento_ms: toNumberOrString(r.vel_viento_ms),
-          presion_mmhg: toNumberOrString(r.presion_mmhg),
-          temp_c: toNumberOrString(r.temp_c),
-          wbgt_c: toNumberOrString(r.wbgt_c),
-          wb_c: toNumberOrString(r.wb_c),
-          gt_c: toNumberOrString(r.gt_c),
-          image_urls: imageUrls,
-        };
+        return { ...r, image_urls: imageUrls };
       });
 
       setRows(mapped);
       setCurrentPage(1);
 
-      // Fecha cabecera con primera fila (usando measured_at)
       if (mapped.length && mapped[0].measured_at) {
         const raw = String(mapped[0].measured_at);
         const [yyyy, mm, dd] = raw.slice(0, 10).split('-');
         setHeaderInfo((h) => ({ ...h, fecha: `${dd}/${mm}/${yyyy}` }));
       }
 
-      // Perfiles
       const ids = Array.from(new Set(mapped.map(m => m.created_by).filter(Boolean)));
       if (ids.length) {
-        const { data: profs } = await supabase
-          .from('profiles')
-          .select('id, username, nombre_completo, email, descripcion, rol, estado')
-          .in('id', ids);
+        const { data: profs } = await supabase.from('profiles').select('id, username, nombre_completo').in('id', ids);
         const dict = {};
-        (profs || []).forEach((u) => {
-          const display =
-            (u.nombre_completo && u.nombre_completo.trim()) ||
-            (u.username && u.username.trim()) ||
-            (u.descripcion && u.descripcion.trim()) ||
-            (u.rol && u.rol.trim()) ||
-            (u.estado && u.estado.trim()) ||
-            (u.email && u.email.trim()) ||
-            u.id;
-          dict[u.id] = display;
-        });
+        (profs || []).forEach((u) => { dict[u.id] = u.nombre_completo || u.username || u.id; });
         setUsersById(dict);
-      } else {
-        setUsersById({});
-      }
-    } catch (e) {
-      console.error('Fetch error:', e);
-      message.error('No se pudo cargar Estrés Calor.');
-      setRows([]);
-    } finally {
-      setLoading(false);
-    }
+      } else { setUsersById({}); }
+    } catch (e) { console.error('Fetch error:', e); message.error('No se pudo cargar Estrés.'); setRows([]); }
+    finally { if (!isBackground) setLoading(false); }
   };
 
   useEffect(() => {
     fetchRows();
-    const ch = supabase
-      .channel('rt-estres-calor')
-      .on('postgres_changes', { event: '*', schema: 'public', table: TABLE_NAME }, fetchRows)
-      .subscribe();
+    const ch = supabase.channel('rt-estres-calor').on('postgres_changes', { event: '*', schema: 'public', table: TABLE_NAME }, () => fetchRows(true)).subscribe();
     return () => supabase.removeChannel(ch);
   }, [projectId, monitoreoId]);
 
-  /* ---------- CRUD ---------- */
+  /* ================ LÓGICA PDF Y SELECCIÓN ================ */
+  const handlePrevImage = (regId, total) => { setTempSelections(prev => ({ ...prev, [regId]: (prev[regId] - 1 + total) % total })); };
+  const handleNextImage = (regId, total) => { setTempSelections(prev => ({ ...prev, [regId]: (prev[regId] + 1) % total })); };
+  const handleRecordSelectionToggle = (recordId) => { setRecordSelections(prev => ({ ...prev, [recordId]: !prev[recordId] })); };
+  const handleSelectAllRecords = () => { const allSelected = {}; rows.filter(r => getImagesArray(r).length > 0).forEach(r => { allSelected[r.id] = true; }); setRecordSelections(allSelected); };
+  const handleDeselectAllRecords = () => { const allDeselected = {}; rows.filter(r => getImagesArray(r).length > 0).forEach(r => { allDeselected[r.id] = false; }); setRecordSelections(allDeselected); };
+
+  const handleOpenPdf = () => {
+    const registrosConFotos = rows.filter(r => getImagesArray(r).length > 0);
+    if (registrosConFotos.length === 0) { message.warning("No hay registros con imágenes."); return; }
+    const initialSelections = {};
+    const initialRecordSelections = {};
+    registrosConFotos.forEach(r => {
+        const imgs = getImagesArray(r);
+        const savedIndex = r.selected_image_index || 0;
+        initialSelections[r.id] = savedIndex < imgs.length ? savedIndex : 0;
+        initialRecordSelections[r.id] = true;
+    });
+    setTempSelections(initialSelections);
+    setRecordSelections(initialRecordSelections);
+    setPdfStep('selection');
+    setIsPdfModalVisible(true);
+  };
+
+  const handleSaveAndGenerate = async () => {
+    setIsSavingSelection(true);
+    const loadingMsg = message.loading("Generando reporte...", 0);
+    try {
+        const registrosConFotos = rows.filter(r => getImagesArray(r).length > 0);
+        const registrosSeleccionados = registrosConFotos.filter(r => recordSelections[r.id] === true);
+        if (registrosSeleccionados.length === 0) { message.warning("No ha seleccionado ningún registro."); setIsSavingSelection(false); loadingMsg(); return; }
+
+        const supabaseTasks = [];
+        const dataForPdf = [];
+        let i = 0;
+
+        for (const r of registrosSeleccionados) {
+            const imgs = getImagesArray(r);
+            const selectedIdx = tempSelections[r.id] !== undefined ? tempSelections[r.id] : 0;
+            const finalIdx = selectedIdx < imgs.length ? selectedIdx : 0;
+            const originalUrl = imgs[finalIdx];
+            const codigo = `CAL-${String(i + 1).padStart(2, '0')}`;
+
+            dataForPdf.push({
+                imageUrl: originalUrl,
+                area: r.area || 'N/A',
+                puesto: r.puesto_trabajo,
+                codigo: codigo,
+                fechaHora: `${formatFechaUTC(r.measured_at)} - ${formatHoraUTC(r.measured_at)}`
+            });
+
+            supabaseTasks.push(
+                supabase.from(TABLE_NAME).update({ selected_image_index: finalIdx }).eq('id', r.id)
+            );
+            i++;
+        }
+
+        await Promise.all(supabaseTasks);
+        fetchRows(true); 
+        setPdfData(dataForPdf);
+        setPdfStep('view'); 
+        message.success("Reporte generado");
+    } catch (error) { console.error("Error generando PDF:", error); message.error("Ocurrió un error inesperado."); } 
+    finally { loadingMsg(); setIsSavingSelection(false); }
+  };
+
+  /* --------- CRUD --------- */
   const handleAdd = () => { setSelected(null); setIsFormOpen(true); };
   const handleEdit = (rec) => { setSelected(rec); setIsFormOpen(true); };
-
   const handleDelete = (rec) => {
     Modal.confirm({
       title: '¿Eliminar registro?',
       icon: <ExclamationCircleOutlined />,
-      content: `Se eliminará el registro "${rec.puesto_trabajo}"`,
+      content: `Se eliminará el registro de "${rec.puesto_trabajo || '—'}"`,
       okText: 'Eliminar', okType: 'danger', cancelText: 'Cancelar',
       onOk: async () => {
         try {
@@ -562,19 +425,14 @@ const EstresCalorPage = () => {
   const onCancelForm = () => setIsFormOpen(false);
 
   const payloadFromValues = (values) => {
-    // construir la hora en LOCAL y luego serializar a ISO (UTC)
     let measuredAt = null;
     if (values.horario) {
       const h = values.horario.hour();
       const m = values.horario.minute();
-
-      // crear fecha local de hoy con la hora elegida
-      const local = dayjs()
-        .hour(h).minute(m).second(0).millisecond(0);
-      measuredAt = local.toDate().toISOString(); // ISO en UTC equivalente
-    } else if (selected?.measured_at) {
-      measuredAt = selected.measured_at;
-    }
+      const base = selected?.measured_at ? dayjs(selected.measured_at) : dayjs();
+      const local = base.hour(h).minute(m).second(0).millisecond(0);
+      measuredAt = local.format('YYYY-MM-DD[T]HH:mm:ssZ');
+    } else if (selected?.measured_at) { measuredAt = selected.measured_at; }
 
     let imageUrls = null;
     if (values.image_urls && values.image_urls.trim() !== '') {
@@ -585,6 +443,7 @@ const EstresCalorPage = () => {
       proyecto_id: projectId || null,
       monitoreo_id: monitoreoId || null,
       measured_at: measuredAt,
+      area: values.area || null, // <-- CAMPO AREA
       puesto_trabajo: values.puesto_trabajo || null,
       interior_exterior: values.interior_exterior || null,
       aclimatado: values.aclimatado ?? null,
@@ -614,10 +473,7 @@ const EstresCalorPage = () => {
       if (error) throw error;
       message.success('Registro agregado.');
       setIsFormOpen(false);
-    } catch (e) {
-      console.error(e);
-      message.error('No se pudo agregar.');
-    } finally { setSaving(false); }
+    } catch (e) { console.error(e); message.error('No se pudo agregar.'); } finally { setSaving(false); }
   };
 
   const doEdit = async () => {
@@ -629,26 +485,22 @@ const EstresCalorPage = () => {
       if (error) throw error;
       message.success('Registro actualizado.');
       setIsFormOpen(false);
-    } catch (e) {
-      console.error(e);
-      message.error('No se pudo actualizar.');
-    } finally { setSaving(false); }
+    } catch (e) { console.error(e); message.error('No se pudo actualizar.'); } finally { setSaving(false); }
   };
 
-  /* ---------- Filtro/Paginación y visor de imágenes ---------- */
+  /* --------- Filtro / Paginación --------- */
   const filtered = useMemo(() => {
     if (!searchText) return rows;
     const s = searchText.toLowerCase();
     return rows.filter(r => {
       const imgs = Array.isArray(r.image_urls) ? r.image_urls.join(',') : (r.image_urls || '');
       return (
+        (r.area && r.area.toLowerCase().includes(s)) ||        
         (r.puesto_trabajo && r.puesto_trabajo.toLowerCase().includes(s)) ||
-        (r.interior_exterior && r.interior_exterior.toLowerCase().includes(s)) ||
         (r.desc_actividades && r.desc_actividades.toLowerCase().includes(s)) ||
-        (r.tipo_ropa_cav && r.tipo_ropa_cav.toLowerCase().includes(s)) ||
-        (r.tasa_metabolica && String(r.tasa_metabolica).toLowerCase().includes(s)) ||
+        (r.metabolismo && r.metabolismo.toLowerCase().includes(s)) ||
+        (r.aislamiento && r.aislamiento.toLowerCase().includes(s)) ||
         (formatHoraUTC(r.measured_at) && formatHoraUTC(r.measured_at).includes(s)) ||
-        (formatFechaUTC(r.measured_at) && formatFechaUTC(r.measured_at).includes(s)) ||
         (imgs && imgs.toLowerCase().includes(s)) ||
         (r.observaciones && r.observaciones.toLowerCase().includes(s))
       );
@@ -669,54 +521,34 @@ const EstresCalorPage = () => {
     setImageViewerOpen(true);
   };
 
-  /* ---------- Columnas (ahora Fecha + Hora separadas) ---------- */
+  /* ---------- Columnas (Orden ASC por defecto) ---------- */
   const columns = [
-    { title: 'N°', 
-      key: 'n', 
-      fixed: 'left',
-      width: 60, render: (_, __, i) => (currentPage - 1) * pageSize + i + 1 
-    },
+    { title: 'N°', key: 'n', width: 60, render: (_, __, i) => (currentPage - 1) * pageSize + i + 1 },
     
-    // Nueva columna Fecha
-    { title: 'FECHA', 
-      dataIndex: 'measured_at', 
-      key: 'measured_date', 
-        // ✅ Permite ordenar ascendente/descendente por fecha
-      sorter: (a, b) => dayjs(a.measured_at).unix() - dayjs(b.measured_at).unix(),
-      defaultSortOrder: 'descend',
-      width: 120, render: (t) => formatFechaUTC(t),
-    },
-
-    // Columna Hora (se conserva)
-    { title: 'HORA', 
-      dataIndex: 'measured_at', 
-      key: 'measured_time', 
-       // ✅ Permite ordenar ascendente/descendente por hora
-      sorter: (a, b) => dayjs(a.measured_at).unix() - dayjs(b.measured_at).unix(),
-      width: 90, 
-      render: (t) => formatHoraUTC(t),
-    },
-    
-    { title: 'PUESTO DE TRABAJO', 
-      dataIndex: 'puesto_trabajo', 
-      key: 'puesto_trabajo', 
-      width: 90, 
-      ellipsis: true 
-    },
-    
+    // Fecha y Hora al principio
     { 
-      title: 'INTERIOR/EXTERIOR', 
-      dataIndex: 'interior_exterior', 
-      key: 'interior_exterior', 
-      width: 150 
+        title: 'FECHA', 
+        dataIndex: 'measured_at', 
+        width: 120, 
+        sorter: (a, b) => dayjs(a.measured_at).unix() - dayjs(b.measured_at).unix(), 
+        defaultSortOrder: 'ascend', 
+        render: (t) => formatFechaUTC(t) 
     },
-    { title: 'ACLIMATADO', 
-      dataIndex: 'aclimatado', 
-      key: 'aclimatado', 
-      width: 110, render: (v) => (String(v) === 'true' ? 'Sí' : String(v) === 'false' ? 'No' : String(v ?? '')) 
-    },
+    // Columna Hora (se conserva)
+              {
+                  title: 'HORA',
+                  dataIndex: 'measured_at',
+                  key: 'measured_time',
+                  sorter: (a, b) => dayjs(a.measured_at).unix() - dayjs(b.measured_at).unix(),
+                  width: 90,
+                  render: (t) => formatHoraUTC(t),
+              },
+    { title: 'AREA DE TRABAJO', dataIndex: 'area', key: 'area', width: 250, ellipsis: true }, // <-- CAMPO AREA
+    { title: 'PUESTO DE TRABAJO', dataIndex: 'puesto_trabajo', key: 'puesto_trabajo', width: 250, ellipsis: true },
+    { title: 'INTERIOR/EXTERIOR', dataIndex: 'interior_exterior', key: 'interior_exterior', width: 150 },
+    { title: 'ACLIMATADO', dataIndex: 'aclimatado', key: 'aclimatado', width: 110, render: (v) => (String(v) === 'true' ? 'Sí' : String(v) === 'false' ? 'No' : String(v ?? '')) },
 
-    { title: 'DESCRIPCIÓN DE ACTIVIDADES', dataIndex: 'desc_actividades', key: 'desc_actividades', width: 240, ellipsis: true },
+    { title: 'DESCRIPCIÓN DE ACTIVIDADES', dataIndex: 'desc_actividades', key: 'desc_actividades', width: 260, ellipsis: true },
     { title: 'TIPO DE ROPA DE TRABAJO CAV °C', dataIndex: 'tipo_ropa_cav', key: 'tipo_ropa_cav', width: 240, ellipsis: true },
     { title: 'CAPUCHA', dataIndex: 'capucha', key: 'capucha', width: 80, render: (v) => (String(v) === 'true' ? 'Sí' : String(v) === 'false' ? 'No' : String(v ?? '')) },
     { title: 'TASA METABÓLICA W', dataIndex: 'tasa_metabolica', key: 'tasa_metabolica', width: 200, ellipsis: true },
@@ -740,7 +572,7 @@ const EstresCalorPage = () => {
       title: 'IMÁGENES',
       dataIndex: 'image_urls',
       key: 'image_urls',
-      width: 120,
+      width: 140,
       render: (imgs) => {
         const list = Array.isArray(imgs) ? imgs : [];
         if (!list.length) return <Text type="secondary">Ninguna</Text>;
@@ -758,7 +590,7 @@ const EstresCalorPage = () => {
       title: 'Registrado por',
       dataIndex: 'created_by',
       key: 'created_by',
-      width: 120,
+      width: 190,
       fixed: 'right',
       render: (v) => {
         if (!v) return <Text type="secondary">N/A</Text>;
@@ -784,7 +616,6 @@ const EstresCalorPage = () => {
     },
   ];
 
-  /* ---------- Render ---------- */
   return (
     <>
       <Breadcrumb style={{ margin: '16px 0' }}>
@@ -808,6 +639,9 @@ const EstresCalorPage = () => {
             <Button icon={<FileExcelOutlined />} onClick={() => exportToExcel(rows, headerInfo)}>
               Exportar a Excel
             </Button>
+            <Button icon={<FilePdfOutlined />} onClick={handleOpenPdf} style={{ backgroundColor: '#ff4d4f', color: 'white', borderColor: '#ff4d4f' }}>
+              Reporte Fotos
+            </Button>
             <Button type="primary" icon={<PlusOutlined />} onClick={handleAdd}>
               Agregar
             </Button>
@@ -815,12 +649,12 @@ const EstresCalorPage = () => {
         </Col>
       </Row>
 
-      {/* Buscador + tamaño de página */}
+      {/* Buscador */}
       <Row justify="space-between" align="middle" style={{ marginBottom: 12, gap: 15 }}>
         <Col flex="0 0 520px">
           <Input.Search
             allowClear
-            placeholder="Buscar por puesto, descripción, ropa, observación..."
+            placeholder="Buscar por puesto, actividades, metabolismo, aislamiento..."
             value={searchText}
             onChange={(e) => { setSearchText(e.target.value); setCurrentPage(1); }}
           />
@@ -830,10 +664,7 @@ const EstresCalorPage = () => {
             <Text type="secondary">Ver:</Text>
             <Select
               value={pageSize}
-              onChange={(val) => {
-                setPageSize(val);
-                setCurrentPage(1);
-              }}
+              onChange={(val) => { setPageSize(val); setCurrentPage(1); }}
               style={{ width: 90 }}
             >
               <Option value={5}>5</Option>
@@ -860,18 +691,17 @@ const EstresCalorPage = () => {
       <Spin spinning={loading}>
         <div style={{ overflowX: 'auto' }}>
           <Table
-            className="tabla-general" // <--- Clase personalizada para estilos de tabla cabecera fija
+          className='tabla-general'
             size="small"
             columns={columns}
             dataSource={pageData}
             rowKey="id"
             pagination={false}
-            scroll={{ x: 1500 }}
+            scroll={{ x: 1800 }}
           />
         </div>
       </Spin>
 
-      {/* Pie paginación */}
       <Row justify="space-between" align="middle" style={{ marginTop: 12 }}>
         <Col>
           {(() => {
@@ -909,44 +739,61 @@ const EstresCalorPage = () => {
           initialValues={
             selected
               ? {
-                  puesto_trabajo: selected.puesto_trabajo,
-                  interior_exterior: selected.interior_exterior,
-                  aclimatado: String(selected.aclimatado) === 'true',
-                  // Muestra la hora en LOCAL al editar (TimePicker)
-                  horario: selected.measured_at ? dayjs(selected.measured_at).local() : null,
-                  desc_actividades: selected.desc_actividades || '',
-                  tipo_ropa_cav: selected.tipo_ropa_cav || '',
-                  capucha: String(selected.capucha) === 'true',
-                  tasa_metabolica: selected.tasa_metabolica || '',
-                  hr_percent: selected.hr_percent,
-                  vel_viento_ms: selected.vel_viento_ms,
-                  presion_mmhg: selected.presion_mmhg,
-                  temp_c: selected.temp_c,
-                  wbgt_c: selected.wbgt_c,
-                  wb_c: selected.wb_c,
-                  gt_c: selected.gt_c,
-                  observaciones: selected.observaciones || '',
-                  image_urls: Array.isArray(selected.image_urls) ? selected.image_urls.join(', ') : (selected.image_urls || ''),
-                  location: selected.location || '',
-                }
+                area: selected.area || '',
+                puesto_trabajo: selected.puesto_trabajo,
+                horario: selected.measured_at ? dayjs(selected.measured_at).utc().local() : null,
+                desc_actividades: selected.desc_actividades || '',
+                metabolismo: selected.metabolismo || '',
+                aislamiento: selected.aislamiento || '',
+                hr_percent: selected.hr_percent,
+                vel_viento_ms: selected.vel_viento_ms,
+                presion_mmhg: selected.presion_mmhg,
+                temp_c: selected.temp_c,
+                wbgt_c: selected.wbgt_c,
+                wb_c: selected.wb_c,
+                gt_c: selected.gt_c,
+                interior_exterior: selected.interior_exterior || '',
+                aclimatado: selected.aclimatado,
+                tipo_ropa_cav: selected.tipo_ropa_cav || '',
+                capucha: selected.capucha,
+                tasa_metabolica: selected.tasa_metabolica || '',
+                observaciones: selected.observaciones || '',
+                image_urls: Array.isArray(selected.image_urls) ? selected.image_urls.join(', ') : (selected.image_urls || ''),
+                location: selected.location || '',
+              }
               : {}
           }
         >
           <Row gutter={12}>
+            
+              <Col span={12}>
+                <Form.Item name="area" label="Área de Trabajo" rules={[{ required: true }]}>
+                  <Input />
+                </Form.Item>
+              </Col>
+            
+              <Col span={12}>
+                <Form.Item name="puesto_trabajo" label="Puesto de Trabajo" rules={[{ required: true }]}>
+                  <Input />
+                </Form.Item>
+              </Col>
+              <Col span={12}>
+                <Form.Item name="horario" label="Hora de medición" rules={[{ required: true }]}>
+                  <TimePicker format="HH:mm" style={{ width: '100%' }} />
+                </Form.Item>
+              </Col>
+              <Col span={12}>
+                  <Form.Item name="interior_exterior" label="Interior/Exterior" rules={[{ required: true }]}>
+                    <Select placeholder="Seleccione">
+                      <Option value="Interior">Interior</Option>
+                      <Option value="Exterior">Exterior</Option>
+                    </Select>
+                  </Form.Item>
+              </Col>
+            </Row>
+
+          <Row gutter={12}>
             <Col span={12}>
-              <Form.Item name="puesto_trabajo" label="Puesto de Trabajo" rules={[{ required: true }]}>
-                <Input />
-              </Form.Item>
-            </Col>
-            <Col span={6}>
-              <Form.Item name="interior_exterior" label="Interior/Exterior" rules={[{ required: true }]}>
-                <Select placeholder="Seleccione">
-                  <Option value="Interior">Interior</Option>
-                  <Option value="Exterior">Exterior</Option>
-                </Select>
-              </Form.Item>
-            </Col>
-            <Col span={6}>
               <Form.Item name="aclimatado" label="Aclimatado" rules={[{ required: true }]}>
                 <Select placeholder="Seleccione">
                   <Option value={true}>Sí</Option>
@@ -954,15 +801,7 @@ const EstresCalorPage = () => {
                 </Select>
               </Form.Item>
             </Col>
-          </Row>
-
-          <Row gutter={12}>
-            <Col span={8}>
-              <Form.Item name="horario" label="Hora de medición" rules={[{ required: true }]}>
-                <TimePicker format="HH:mm" style={{ width: '100%' }} />
-              </Form.Item>
-            </Col>
-            <Col span={16}>
+            <Col span={12}>
               <Form.Item name="desc_actividades" label="Descripción de actividades">
                 <Input />
               </Form.Item>
@@ -970,12 +809,12 @@ const EstresCalorPage = () => {
           </Row>
 
           <Row gutter={12}>
-            <Col span={12}>
+             <Col span={12}>
               <Form.Item name="tipo_ropa_cav" label="Tipo de ropa de trabajo CAV °C">
                 <Input placeholder="Ej: Ropa de trabajo" />
               </Form.Item>
             </Col>
-            <Col span={6}>
+            <Col span={12}>
               <Form.Item name="capucha" label="Capucha" rules={[{ required: true }]}>
                 <Select placeholder="Seleccione">
                   <Option value={true}>Sí</Option>
@@ -983,7 +822,10 @@ const EstresCalorPage = () => {
                 </Select>
               </Form.Item>
             </Col>
-            <Col span={6}>
+          </Row>
+
+          <Row gutter={12}>
+            <Col span={12}>
               <Form.Item name="tasa_metabolica" label="Tasa metabólica (W)">
                 <Input placeholder="Ej: Clase 2 / Índice metabólico medio" />
               </Form.Item>
@@ -1061,6 +903,75 @@ const EstresCalorPage = () => {
         ) : (
           <Text type="secondary">Sin imagen.</Text>
         )}
+      </Modal>
+
+      {/* === MODAL DE PDF === */}
+      <Modal
+          title={pdfStep === 'selection' ? "Seleccionar Imágenes" : "Vista Previa PDF"}
+          open={isPdfModalVisible}
+          onCancel={() => setIsPdfModalVisible(false)}
+          width={1000}
+          style={{ top: 20 }}
+          footer={
+            pdfStep === 'selection' ? (
+                <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', alignItems: 'center' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <Text strong>Distribución:</Text>
+                        <Select defaultValue="2x4" style={{ width: 120 }} onChange={setPdfLayout}>
+                            <Option value="2x4">2 x 4</Option><Option value="2x3">2 x 3</Option>
+                            <Option value="3x3">3 x 3</Option><Option value="3x4">3 x 4</Option>
+                        </Select>
+                    </div>
+                    <Button type="primary" icon={<SaveOutlined />} onClick={handleSaveAndGenerate} loading={isSavingSelection}>
+                        Guardar y Generar PDF
+                    </Button>
+                </div>
+            ) : (
+                <Button onClick={() => setPdfStep('selection')}><ArrowLeftOutlined /> Volver a Monitoreos</Button>
+            )
+          }
+      >
+          <div style={{ height: '75vh', overflowY: 'auto', overflowX: 'hidden' }}>
+              {pdfStep === 'selection' && (
+                  <>
+                    <div style={{ marginBottom: 16, paddingBottom: 16, borderBottom: '1px solid #f0f0f0', display: 'flex', justifyContent: 'center', gap: 16 }}>
+                        <Button size="small" onClick={handleSelectAllRecords}>Seleccionar Todos</Button>
+                        <Button size="small" onClick={handleDeselectAllRecords}>Deseleccionar Todos</Button>
+                    </div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', justifyContent: 'center' }}>
+                      {rows.filter(r => getImagesArray(r).length > 0).map((r) => {
+                          const imgs = getImagesArray(r);
+                          const currentIdx = tempSelections[r.id] || 0;
+                          const isSelected = recordSelections[r.id] === true;
+                          return (
+                              <div key={r.id} style={{ width: '23%', border: isSelected ? '1px solid #ddd' : '1px dashed #999', opacity: isSelected ? 1 : 0.5, padding: '8px', borderRadius: '8px', display: 'flex', flexDirection: 'column', alignItems: 'center', backgroundColor: '#fafafa', position: 'relative' }}>
+                                  <Checkbox checked={isSelected} onChange={() => handleRecordSelectionToggle(r.id)} style={{ position: 'absolute', top: 5, right: 5, zIndex: 20 }} />
+                                  <Text strong style={{ fontSize: 12 }}>{headerInfo.tipo_monitoreo}</Text>
+                                  <div style={{ position: 'relative', width: '100%', height: '150px', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff', border: '1px solid #eee', marginTop: 5 }}>
+                                      {imgs.length > 1 && <Button shape="circle" icon={<LeftOutlined />} size="small" style={{ position: 'absolute', left: 5 }} onClick={() => handlePrevImage(r.id, imgs.length)} />}
+                                      <img src={imgs[currentIdx]} style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
+                                      {imgs.length > 1 && <Button shape="circle" icon={<RightOutlined />} size="small" style={{ position: 'absolute', right: 5 }} onClick={() => handleNextImage(r.id, imgs.length)} />}
+                                      {imgs.length > 1 && <span style={{ position: 'absolute', bottom: 2, right: 5, fontSize: 10, background: 'rgba(255,255,255,0.7)' }}>{currentIdx + 1}/{imgs.length}</span>}
+                                  </div>
+                                  <Text style={{ fontSize: 11, marginTop: 5 }}>{r.puesto_trabajo}</Text>
+                              </div>
+                          );
+                      })}
+                    </div>
+                  </>
+              )}
+              {pdfStep === 'view' && (
+                  <PDFViewer width="100%" height="100%" showToolbar={true}>
+                      <ReporteFotografico 
+                          data={pdfData} 
+                          empresa={headerInfo.descripcion_proyecto || 'SIN DESCRIPCIÓN'} 
+                          layout={pdfLayout}
+                          tituloMonitoreo={headerInfo.tipo_monitoreo || 'Estrés Calor'} 
+                          descripcionProyecto={''}
+                      />
+                  </PDFViewer>
+              )}
+          </div>
       </Modal>
     </>
   );
