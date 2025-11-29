@@ -16,7 +16,7 @@ const DashboardPage = () => {
   return (
     <div>
       <Title level={1} style={{ color: PRIMARY_BLUE, fontWeight: 'bold' }}>
-        Página Principal del Dashboard 👋
+        Página Principal 👋
         
       </Title>
       <Typography.Text type="secondary">

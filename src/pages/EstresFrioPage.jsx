@@ -1,42 +1,13 @@
-// src/pages/CalorFrioPage.jsx
-
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import {
-  Table,
-  Button,
-  Form,
-  Input,
-  Modal,
-  Select,
-  Typography,
-  Space,
-  Tooltip,
-  message,
-  Spin,
-  InputNumber,
-  Breadcrumb,
-  TimePicker,
-  Row,
-  Col,
-  Descriptions,
-  Pagination,
-  Checkbox, // <-- NUEVO
-  Divider   // <-- NUEVO
+  Table, Button, Form, Input, Modal, Select, Typography, Space, Tooltip,
+  message, Spin, InputNumber, Breadcrumb, TimePicker, Row, Col, Descriptions,
+  Pagination, Checkbox, Divider, Progress
 } from 'antd';
 import {
-  PlusOutlined,
-  EditOutlined,
-  DeleteOutlined,
-  HomeOutlined,
-  DatabaseOutlined,
-  ExclamationCircleOutlined,
-  ArrowLeftOutlined,
-  FileExcelOutlined,
-  EyeOutlined,
-  FilePdfOutlined, // <-- NUEVO
-  SaveOutlined,    // <-- NUEVO
-  LeftOutlined,    // <-- NUEVO
-  RightOutlined    // <-- NUEVO
+  PlusOutlined, EditOutlined, DeleteOutlined, HomeOutlined, DatabaseOutlined,
+  ExclamationCircleOutlined, ArrowLeftOutlined, FileExcelOutlined, EyeOutlined,
+  FilePdfOutlined, SaveOutlined, LeftOutlined, RightOutlined
 } from '@ant-design/icons';
 
 import { Link, useNavigate, useParams } from 'react-router-dom';
@@ -45,7 +16,7 @@ import { supabase } from '../supabaseClient.js';
 import dayjs from 'dayjs';
 import 'dayjs/locale/es';
 import utc from 'dayjs/plugin/utc';
-import * as XLSX from 'xlsx';          // (tu versión nueva de Excel)
+import * as XLSX from 'xlsx';
 
 // IMPORTS DEL REPORTE FOTOGRÁFICO
 import { PDFViewer } from '@react-pdf/renderer';
@@ -58,10 +29,10 @@ const { Title, Text } = Typography;
 const { Option } = Select;
 
 const PRIMARY_BLUE = '#2a8bb6';
-const TABLE_NAME = 'estres_frio'; // O estres_calor, segun corresponda
+const TABLE_NAME = 'estres_frio'; 
 
 /* =========================================================
-   Helpers
+   Helpers & Utilidades
    ========================================================= */
 
 const formatHoraUTC = (v) => {
@@ -111,6 +82,71 @@ const getImagesArray = (reg) => {
         }
     }
     return [];
+};
+
+/**
+ * PROCESAMIENTO OPTIMIZADO DE IMÁGENES (COMPRESIÓN)
+ * Reducimos drásticamente el tamaño y calidad para que el PDF pese poco (aprox 6-10MB)
+ */
+const processImageForPdf = (url) => {
+  return new Promise((resolve) => {
+    // Timeout de 4s por imagen para no colgar el proceso
+    const timeoutId = setTimeout(() => {
+      resolve(url); 
+    }, 4000); 
+
+    const img = new Image();
+    img.crossOrigin = 'Anonymous'; 
+    img.src = url;
+
+    img.onload = () => {
+      clearTimeout(timeoutId);
+      try {
+        const canvas = document.createElement('canvas');
+        let width = img.width;
+        let height = img.height;
+
+        // --- OPTIMIZACIÓN CLAVE ---
+        // 800px es más que suficiente para ver la foto en un PDF tamaño carta.
+        // El código anterior tenía 1500px, lo cual cuadruplica el peso.
+        const MAX_SIZE = 800; 
+        
+        if (width > height) {
+          if (width > MAX_SIZE) {
+            height *= MAX_SIZE / width;
+            width = MAX_SIZE;
+          }
+        } else {
+          if (height > MAX_SIZE) {
+            width *= MAX_SIZE / height;
+            height = MAX_SIZE;
+          }
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        
+        // Dibujar en canvas también corrige la rotación EXIF automáticamente en navegadores modernos
+        ctx.drawImage(img, 0, 0, width, height);
+
+        // --- COMPRESIÓN JPEG ---
+        // Calidad 0.6 (60%) reduce el peso un 70-80% sin pérdida visual notable en PDF.
+        // El código anterior tenía 0.85.
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.6);
+        
+        resolve(dataUrl); 
+      } catch (error) {
+        console.warn("Error comprimiendo imagen", error);
+        resolve(url);
+      }
+    };
+
+    img.onerror = () => {
+      clearTimeout(timeoutId);
+      resolve(url);
+    };
+  });
 };
 
 /* ============================ Export a Excel ============================ */
@@ -176,7 +212,7 @@ const exportToExcel = (rows = [], header) => {
 /* =========================================================
    Componente principal
    ========================================================= */
-const CalorFrioPage = () => {
+const EstresFrioPage = () => {
   const { projectId, monitoreoId: mId, id } = useParams();
   const monitoreoId = mId || id;
   const navigate = useNavigate();
@@ -217,10 +253,13 @@ const CalorFrioPage = () => {
   const [pdfData, setPdfData] = useState([]);
   const [tempSelections, setTempSelections] = useState({}); 
   const [recordSelections, setRecordSelections] = useState({}); 
-  const [isSavingSelection, setIsSavingSelection] = useState(false);
   const [pdfLayout, setPdfLayout] = useState('2x4');
 
-  /* ---------- Cabecera (proyecto/monitoreo/equipos) ---------- */
+  // Estado para la barra de progreso
+  const [progressPercent, setProgressPercent] = useState(0);
+  const [processingStatus, setProcessingStatus] = useState('');
+
+  /* ---------- Cabecera ---------- */
   useEffect(() => {
     (async () => {
       setLoadingHeader(true);
@@ -262,11 +301,10 @@ const CalorFrioPage = () => {
     })();
   }, [projectId, monitoreoId]);
 
-  /* --------- Traer filas (ASCENDENTE POR FECHA) --------- */
-  const fetchRows = async (isBackground = false) => {
+  /* --------- Traer filas --------- */
+  const fetchRows = useCallback(async (isBackground = false) => {
     if (!isBackground) setLoading(true);
     try {
-      // CAMBIO AQUÍ: Orden ASCENDENTE por fecha (lo más viejo primero)
       let q = supabase.from(TABLE_NAME).select('*').order('measured_at', { ascending: true });
 
       if (monitoreoId && projectId) { q = q.or(`monitoreo_id.eq.${monitoreoId},proyecto_id.eq.${projectId}`); }
@@ -277,22 +315,11 @@ const CalorFrioPage = () => {
       if (error) throw error;
 
       const mapped = (data || []).map((r) => {
-        let imageUrls = [];
-        if (Array.isArray(r.image_urls)) imageUrls = r.image_urls;
-        else if (typeof r.image_urls === 'string' && r.image_urls.trim() !== '') {
-          try {
-              const parsed = JSON.parse(r.image_urls);
-              if(Array.isArray(parsed)) imageUrls = parsed;
-              else imageUrls = r.image_urls.split(',').map((s) => s.trim());
-          } catch {
-              imageUrls = r.image_urls.split(',').map((s) => s.trim());
-          }
-        }
-        return { ...r, image_urls: imageUrls };
+        return { ...r, image_urls: getImagesArray(r) };
       });
 
       setRows(mapped);
-      setCurrentPage(1);
+      if(!isBackground) setCurrentPage(1);
 
       if (mapped.length && mapped[0].measured_at) {
         const raw = String(mapped[0].measured_at);
@@ -307,15 +334,18 @@ const CalorFrioPage = () => {
         (profs || []).forEach((u) => { dict[u.id] = u.nombre_completo || u.username || u.id; });
         setUsersById(dict);
       } else { setUsersById({}); }
-    } catch (e) { console.error('Fetch error:', e); message.error('No se pudo cargar Estrés.'); setRows([]); }
-    finally { if (!isBackground) setLoading(false); }
-  };
+    } catch (e) { 
+        if(!isBackground) message.error('No se pudo cargar Estrés.'); 
+    } finally { 
+        if (!isBackground) setLoading(false); 
+    }
+  }, [monitoreoId, projectId]);
 
   useEffect(() => {
     fetchRows();
     const ch = supabase.channel('rt-estres').on('postgres_changes', { event: '*', schema: 'public', table: TABLE_NAME }, () => fetchRows(true)).subscribe();
     return () => supabase.removeChannel(ch);
-  }, [projectId, monitoreoId]);
+  }, [fetchRows]);
 
   /* ================ LÓGICA PDF Y SELECCIÓN ================ */
   const handlePrevImage = (regId, total) => { setTempSelections(prev => ({ ...prev, [regId]: (prev[regId] - 1 + total) % total })); };
@@ -332,55 +362,82 @@ const CalorFrioPage = () => {
     registrosConFotos.forEach(r => {
         const imgs = getImagesArray(r);
         const savedIndex = r.selected_image_index || 0;
-        initialSelections[r.id] = savedIndex < imgs.length ? savedIndex : 0;
+        initialSelections[r.id] = (savedIndex >= 0 && savedIndex < imgs.length) ? savedIndex : 0;
         initialRecordSelections[r.id] = true;
     });
     setTempSelections(initialSelections);
     setRecordSelections(initialRecordSelections);
     setPdfStep('selection');
+    setPdfData([]);
     setIsPdfModalVisible(true);
   };
 
+  /**
+   * GENERACIÓN POR LOTES (BATCHING) + BARRA DE PROGRESO
+   */
   const handleSaveAndGenerate = async () => {
-    setIsSavingSelection(true);
-    const loadingMsg = message.loading("Generando reporte...", 0);
-    try {
-        const registrosConFotos = rows.filter(r => getImagesArray(r).length > 0);
-        const registrosSeleccionados = registrosConFotos.filter(r => recordSelections[r.id] === true);
-        if (registrosSeleccionados.length === 0) { message.warning("No ha seleccionado ningún registro."); setIsSavingSelection(false); loadingMsg(); return; }
+    const selectedRows = rows.filter(r => recordSelections[r.id] === true && getImagesArray(r).length > 0);
+    if (!selectedRows.length) return message.warning("Seleccione al menos un registro.");
 
-        const supabaseTasks = [];
-        const dataForPdf = [];
-        let i = 0;
+    setPdfStep('processing'); // Cambiamos a vista de carga
+    setProgressPercent(0);
+    setProcessingStatus('Iniciando procesamiento de imágenes...');
 
-        for (const r of registrosSeleccionados) {
+    const BATCH_SIZE = 5; // Procesar 5 imágenes a la vez
+    const total = selectedRows.length;
+    const finalPdfData = [];
+    
+    // NOTA: No hacemos UPDATE a Supabase aquí para evitar bucle infinito.
+
+    for (let i = 0; i < total; i += BATCH_SIZE) {
+        const batch = selectedRows.slice(i, i + BATCH_SIZE);
+        
+        // Procesamos el lote en paralelo
+        const batchPromises = batch.map(async (r, batchIndex) => {
+            const globalIndex = i + batchIndex;
             const imgs = getImagesArray(r);
-            const selectedIdx = tempSelections[r.id] !== undefined ? tempSelections[r.id] : 0;
-            const finalIdx = selectedIdx < imgs.length ? selectedIdx : 0;
+            const idx = tempSelections[r.id] !== undefined ? tempSelections[r.id] : 0;
+            const finalIdx = (idx >= 0 && idx < imgs.length) ? idx : 0;
             const originalUrl = imgs[finalIdx];
-            const codigo = `EST-${String(i + 1).padStart(2, '0')}`;
 
-            dataForPdf.push({
-                imageUrl: originalUrl,
+            let processedUrl = originalUrl;
+            try {
+                // Resize y fix rotación (0.6 calidad)
+                processedUrl = await processImageForPdf(originalUrl);
+            } catch (err) {
+                console.warn("Error img", err);
+            }
+
+            const codigo = `FRI-${String(globalIndex + 1).padStart(2, '0')}`;
+            return {
+                imageUrl: processedUrl,
                 area: r.area || 'N/A',
                 puesto: r.puesto_trabajo,
                 codigo: codigo,
                 fechaHora: `${formatFechaUTC(r.measured_at)} - ${formatHoraUTC(r.measured_at)}`
-            });
+            };
+        });
 
-            supabaseTasks.push(
-                supabase.from(TABLE_NAME).update({ selected_image_index: finalIdx }).eq('id', r.id)
-            );
-            i++;
-        }
+        const batchResults = await Promise.all(batchPromises);
+        finalPdfData.push(...batchResults);
 
-        await Promise.all(supabaseTasks);
-        fetchRows(true); 
-        setPdfData(dataForPdf);
-        setPdfStep('view'); 
-        message.success("Reporte generado");
-    } catch (error) { console.error("Error generando PDF:", error); message.error("Ocurrió un error inesperado."); } 
-    finally { loadingMsg(); setIsSavingSelection(false); }
+        // Actualizar progreso
+        const currentCount = Math.min(i + BATCH_SIZE, total);
+        const percent = Math.round((currentCount / total) * 100);
+        setProgressPercent(percent);
+        setProcessingStatus(`Procesando ${currentCount} de ${total} imágenes...`);
+        
+        // Pequeña pausa para el UI
+        await new Promise(resolve => setTimeout(resolve, 50));
+    }
+
+    setPdfData(finalPdfData);
+    setProcessingStatus('Generando documento PDF...');
+    
+    // Breve timeout final
+    setTimeout(() => {
+        setPdfStep('view');
+    }, 500);
   };
 
   /* --------- CRUD --------- */
@@ -499,25 +556,22 @@ const CalorFrioPage = () => {
   /* ---------- Columnas (Orden ASC por defecto) ---------- */
   const columns = [
     { title: 'N°', key: 'n', width: 60, render: (_, __, i) => (currentPage - 1) * pageSize + i + 1 },
-    
-    // Fecha y Hora al principio (ASCENDENTE POR DEFECTO)
     { 
         title: 'FECHA', 
         dataIndex: 'measured_at', 
         width: 120, 
         sorter: (a, b) => dayjs(a.measured_at).unix() - dayjs(b.measured_at).unix(), 
-        defaultSortOrder: 'ascend', // <-- CAMBIO: ASCENDENTE
+        defaultSortOrder: 'ascend', // ASCENDENTE
         render: (t) => formatFechaUTC(t) 
     },
-    // Columna Hora (se conserva)
-              {
-                  title: 'HORA',
-                  dataIndex: 'measured_at',
-                  key: 'measured_time',
-                  sorter: (a, b) => dayjs(a.measured_at).unix() - dayjs(b.measured_at).unix(),
-                  width: 90,
-                  render: (t) => formatHoraUTC(t),
-              },
+    {
+          title: 'HORA',
+          dataIndex: 'measured_at',
+          key: 'measured_time',
+          sorter: (a, b) => dayjs(a.measured_at).unix() - dayjs(b.measured_at).unix(),
+          width: 90,
+          render: (t) => formatHoraUTC(t),
+      },
 
     { title: 'AREA DE TRABAJO', dataIndex: 'area', key: 'area', width: 250, ellipsis: true },
     { title: 'PUESTO DE TRABAJO', dataIndex: 'puesto_trabajo', key: 'puesto_trabajo', width: 250, ellipsis: true },
@@ -833,76 +887,101 @@ const CalorFrioPage = () => {
         )}
       </Modal>
 
-      {/* === MODAL DE PDF === */}
-      <Modal
-          title={pdfStep === 'selection' ? "Seleccionar Imágenes" : "Vista Previa PDF"}
-          open={isPdfModalVisible}
-          onCancel={() => setIsPdfModalVisible(false)}
-          width={1000}
-          style={{ top: 20 }}
-          footer={
-            pdfStep === 'selection' ? (
-                <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', alignItems: 'center' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <Text strong>Distribución:</Text>
-                        <Select defaultValue="2x4" style={{ width: 120 }} onChange={setPdfLayout}>
-                            <Option value="2x4">2 x 4</Option><Option value="2x3">2 x 3</Option>
-                            <Option value="3x3">3 x 3</Option><Option value="3x4">3 x 4</Option>
-                        </Select>
-                    </div>
-                    <Button type="primary" icon={<SaveOutlined />} onClick={handleSaveAndGenerate} loading={isSavingSelection}>
-                        Guardar y Generar PDF
-                    </Button>
-                </div>
-            ) : (
-                <Button onClick={() => setPdfStep('selection')}><ArrowLeftOutlined /> Volver</Button>
-            )
-          }
+      {/* --- MODAL PDF CON BARRA DE PROGRESO Y OPCIÓN 3x4 --- */}
+      <Modal title="Vista Previa PDF" open={isPdfModalVisible} onCancel={() => setIsPdfModalVisible(false)} width={1000} style={{ top: 20 }}
+        footer={null} // Controlado internamente
+        destroyOnClose={false}
+        maskClosable={pdfStep !== 'processing'}
       >
-          <div style={{ height: '75vh', overflowY: 'auto', overflowX: 'hidden' }}>
-              {pdfStep === 'selection' && (
-                  <>
-                    <div style={{ marginBottom: 16, paddingBottom: 16, borderBottom: '1px solid #f0f0f0', display: 'flex', justifyContent: 'center', gap: 16 }}>
-                        <Button size="small" onClick={handleSelectAllRecords}>Seleccionar Todos</Button>
-                        <Button size="small" onClick={handleDeselectAllRecords}>Deseleccionar Todos</Button>
-                    </div>
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', justifyContent: 'center' }}>
-                      {rows.filter(r => getImagesArray(r).length > 0).map((r) => {
-                          const imgs = getImagesArray(r);
-                          const currentIdx = tempSelections[r.id] || 0;
-                          const isSelected = recordSelections[r.id] === true;
-                          return (
-                              <div key={r.id} style={{ width: '23%', border: isSelected ? '1px solid #ddd' : '1px dashed #999', opacity: isSelected ? 1 : 0.5, padding: '8px', borderRadius: '8px', display: 'flex', flexDirection: 'column', alignItems: 'center', backgroundColor: '#fafafa', position: 'relative' }}>
-                                  <Checkbox checked={isSelected} onChange={() => handleRecordSelectionToggle(r.id)} style={{ position: 'absolute', top: 5, right: 5, zIndex: 20 }} />
-                                  <Text strong style={{ fontSize: 12 }}>{headerInfo.tipo_monitoreo}</Text>
-                                  <div style={{ position: 'relative', width: '100%', height: '150px', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff', border: '1px solid #eee', marginTop: 5 }}>
-                                      {imgs.length > 1 && <Button shape="circle" icon={<LeftOutlined />} size="small" style={{ position: 'absolute', left: 5 }} onClick={() => handlePrevImage(r.id, imgs.length)} />}
-                                      <img src={imgs[currentIdx]} style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
-                                      {imgs.length > 1 && <Button shape="circle" icon={<RightOutlined />} size="small" style={{ position: 'absolute', right: 5 }} onClick={() => handleNextImage(r.id, imgs.length)} />}
-                                      {imgs.length > 1 && <span style={{ position: 'absolute', bottom: 2, right: 5, fontSize: 10, background: 'rgba(255,255,255,0.7)' }}>{currentIdx + 1}/{imgs.length}</span>}
-                                  </div>
-                                  <Text style={{ fontSize: 11, marginTop: 5 }}>{r.puesto_trabajo}</Text>
-                              </div>
-                          );
-                      })}
-                    </div>
-                  </>
-              )}
-              {pdfStep === 'view' && (
-                  <PDFViewer width="100%" height="100%" showToolbar={true}>
-                      <ReporteFotografico 
+        
+        {/* PASO 1: SELECCIÓN */}
+        {pdfStep === 'selection' && (
+           <div style={{display:'flex', flexDirection:'column', height: '70vh'}}>
+              <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center', background:'#f5f5f5', padding: 10, borderRadius: 5 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <Button size="small" onClick={handleSelectAllRecords}>Todos</Button>
+                    <Button size="small" onClick={handleDeselectAllRecords}>Ninguno</Button>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <Text strong>Distribución:</Text>
+                    <Select value={pdfLayout} onChange={setPdfLayout} style={{ width: 120 }}>
+                        <Option value="2x2">2 x 2</Option>
+                        <Option value="2x3">2 x 3</Option>
+                        <Option value="2x4">2 x 4</Option>
+                        <Option value="3x3">3 x 3</Option>
+                        <Option value="3x4">3 x 4</Option> {/* NUEVA OPCION */}
+                    </Select>
+                    <Button type="primary" icon={<SaveOutlined />} onClick={handleSaveAndGenerate}>Generar PDF</Button>
+                  </div>
+              </div>
+
+              <div style={{ flex: 1, overflowY: 'auto', padding: 5 }}>
+                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', justifyContent: 'center' }}>
+                     {rows.filter(r => getImagesArray(r).length > 0).map(r => {
+                         const imgs = getImagesArray(r);
+                         const currentIdx = tempSelections[r.id] || 0;
+                         const isSelected = recordSelections[r.id] === true;
+                         return (
+                             <div key={r.id} style={{ 
+                                 width: '23%', // ESTILO ORIGINAL (Estrecho)
+                                 border: isSelected ? '1px solid #ddd' : '1px dashed #999', 
+                                 opacity: isSelected ? 1 : 0.5, 
+                                 padding: 8, 
+                                 position: 'relative',
+                                 backgroundColor: isSelected ? '#fff' : 'transparent'
+                             }}>
+                                 <Checkbox checked={isSelected} onChange={() => handleRecordSelectionToggle(r.id)} style={{ position: 'absolute', top: 5, right: 5, zIndex: 20 }} />
+                                 <div style={{ position: 'relative', width: '100%', height: 150, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#fff' }}>
+                                     <img src={imgs[currentIdx]} style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
+                                     {imgs.length > 1 && (
+                                         <>
+                                             <Button icon={<LeftOutlined />} size="small" style={{ position: 'absolute', left: 0 }} onClick={() => handlePrevImage(r.id, imgs.length)} />
+                                             <Button icon={<RightOutlined />} size="small" style={{ position: 'absolute', right: 0 }} onClick={() => handleNextImage(r.id, imgs.length)} />
+                                         </>
+                                     )}
+                                 </div>
+                                 <Text style={{ fontSize: 11 }}>{r.puesto_trabajo}</Text>
+                             </div>
+                         )
+                     })}
+                 </div>
+              </div>
+           </div>
+        )}
+
+        {/* PASO 2: PROCESANDO (Loading Bar) */}
+        {pdfStep === 'processing' && (
+            <div style={{
+                height: '50vh', display: 'flex', flexDirection: 'column', 
+                justifyContent: 'center', alignItems: 'center', padding: 40
+            }}>
+                <Spin size="large" />
+                <div style={{ marginTop: 30, width: '80%' }}>
+                    <Progress percent={progressPercent} status="active" />
+                </div>
+                <Text style={{ marginTop: 15, fontSize: 16 }}>{processingStatus}</Text>
+            </div>
+        )}
+
+        {/* PASO 3: VISOR PDF */}
+        {pdfStep === 'view' && (
+            <div style={{height: '80vh', display:'flex', flexDirection:'column'}}>
+                <Button onClick={() => setPdfStep('selection')} icon={<ArrowLeftOutlined/>} style={{marginBottom: 10, width: 'fit-content'}}>Volver</Button>
+                {pdfData.length > 0 && (
+                    <PDFViewer width="100%" height="100%" showToolbar={true}>
+                        <ReporteFotografico 
                           data={pdfData} 
-                          empresa={headerInfo.descripcion_proyecto || 'SIN DESCRIPCIÓN'} 
-                          layout={pdfLayout}
-                          tituloMonitoreo={headerInfo.tipo_monitoreo || 'Estrés Frío'} 
-                          descripcionProyecto={''}
-                      />
-                  </PDFViewer>
-              )}
-          </div>
+                          empresa={headerInfo.descripcion_proyecto || ''} 
+                          layout={pdfLayout} 
+                          tituloMonitoreo={headerInfo.tipo_monitoreo} 
+                        />
+                    </PDFViewer>
+                )}
+            </div>
+        )}
       </Modal>
     </>
   );
 };
 
-export default CalorFrioPage;
+export default EstresFrioPage;

@@ -23,7 +23,7 @@ const styles = StyleSheet.create({
   cell: { fontSize: 10, width: '25%' }, // Ajustar anchos según necesidad
   imageGrid: { flexDirection: 'row', flexWrap: 'wrap', marginTop: 10 },
   imageWrapper: { width: '33%', padding: 2 },
-  image: { width: '100%', height: 100, objectFit: 'contain' }
+  image: { width: '100%', height: '100%', objectFit: 'contain' }
 });
 
 export const ReporteGeneralPDF = ({ data, proyectoInfo }) => {

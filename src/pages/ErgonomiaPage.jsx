@@ -138,6 +138,30 @@ const ErgonomiaPage = () => {
 
     /* ================ HELPERS UI ================ */
 
+    // --- Función robusta para limpiar URLs venga como venga de la BD ---
+    const parseImageUrls = (rawValue) => {
+        if (!rawValue) return [];
+        if (Array.isArray(rawValue)) return rawValue; // Ya es array
+
+        if (typeof rawValue === 'string') {
+            const trimmed = rawValue.trim();
+            if (trimmed === '') return [];
+
+            // Caso 1: JSON válido
+            try {
+                const parsed = JSON.parse(trimmed);
+                if (Array.isArray(parsed)) return parsed;
+            } catch (e) {
+                // No es JSON, continuamos
+            }
+
+            // Caso 2: Formato string sucio (Postgres array con llaves {}, o string con comillas)
+            const cleanString = trimmed.replace(/[\[\]\{\}"']/g, '');
+            return cleanString.split(',').map(url => url.trim()).filter(url => url.length > 0);
+        }
+        return [];
+    };
+
     const renderLocation = (v) => {
         if (!v) return <Text type="secondary">N/A</Text>;
         if (typeof v === 'object') {
@@ -164,18 +188,17 @@ const ErgonomiaPage = () => {
 
     // Helper para obtener array de imagenes limpio
     const getImagesArray = (reg) => {
-        if (Array.isArray(reg.image_urls)) return reg.image_urls;
-        if (typeof reg.image_urls === 'string' && reg.image_urls.trim() !== '') {
-            try {
-                // Intentar parsear si viene como JSON string
-                const parsed = JSON.parse(reg.image_urls);
-                if(Array.isArray(parsed)) return parsed;
-                return reg.image_urls.split(',').map(s => s.trim());
-            } catch {
-                return reg.image_urls.split(',').map(s => s.trim());
-            }
+        return parseImageUrls(reg.image_urls);
+    };
+
+    // --- Función para abrir el visor ---
+    const openImageViewer = (urls, idx = 0) => {
+        const validUrls = parseImageUrls(urls);
+        if (validUrls.length > 0) {
+            setImageViewerList(validUrls);
+            setImageViewerIndex(idx);
+            setImageViewerOpen(true);
         }
-        return [];
     };
 
 
@@ -292,7 +315,7 @@ const ErgonomiaPage = () => {
     };
 
 
-    /* ---------- EXPORTAR EXCEL ---------- */
+    /* ---------- EXPORTAR EXCEL COMPLETADO (SIN OMISIONES) ---------- */
     const exportToExcel = () => {
         try {
             const B = {
@@ -312,47 +335,79 @@ const ErgonomiaPage = () => {
             const fechaMonitoreo = headerInfo.fecha || '';
             const wb = XLSX.utils.book_new();
 
-            const toUTMText = (loc) => {
-                if (!loc) return '';
-                try {
-                    const o = typeof loc === 'string' ? JSON.parse(loc) : loc;
-                    const e = o.easting ?? '';
-                    const n = o.northing ?? '';
-                    const z = o.utm_zone ?? '';
-                    if (e || n || z) return `E: ${e}   N: ${n}   Z: ${z}`;
-                    const lat = o.lat ?? o.latitude ?? '';
-                    const lng = o.lng ?? o.longitude ?? '';
-                    if (lat || lng) return `lat: ${lat}   lng: ${lng}`;
-                    return '';
-                } catch { return String(loc); }
-            };
-
             rows.forEach((r, idx) => {
                 const wsData = [];
-                // ... (Tu lógica de Excel existente se mantiene igual) ...
-                // (La he resumido para no alargar demasiado la respuesta, pero aquí iría tu código original de wsData.push...)
                 
-                // Encabezado superior (logo/títulos/controles) – solo estructura
+                // 1. Encabezado
                 wsData.push([{ v: 'FICHA DE INSPECCIÓN', s: sTitle }]);
                 wsData.push([{ v: 'ESTUDIO DE ERGONÓMICO', s: sTitle }]);
                 wsData.push([{ v: 'PACHABOL S.R.L.', s: sTitle }]);
                 wsData.push(['']); // espacio
 
-                // IDENTIFICACIÓN DE LA EMPRESA (barra gris)
+                // 2. Identificación Empresa
                 wsData.push([{ v: 'IDENTIFICACIÓN DE LA EMPRESA', s: sHeader }]);
                 wsData.push([{ v: 'Nombre /Razón Social:', s: sLabel }, { v: empresaNombre, s: sYellow }]);
-                // ... Resto de tu excel ...
+                wsData.push(['']);
+
+                // 3. Datos del Trabajador
+                wsData.push([{ v: 'DATOS DEL TRABAJADOR', s: sHeader }]);
+                wsData.push([{ v: 'Área de Trabajo:', s: sLabel }, { v: r.area_trabajo || '', s: sYellow }]);
+                wsData.push([{ v: 'Nombre del Trabajador:', s: sLabel }, { v: r.trabajador_nombre || '', s: sYellow }]);
+                wsData.push([{ v: 'Cargo:', s: sLabel }, { v: r.cargo || '', s: sYellow }]);
+                wsData.push([{ v: 'Edad:', s: sLabel }, { v: r.edad || '', s: sYellow }]);
+                wsData.push([{ v: 'Turno:', s: sLabel }, { v: r.turno || '', s: sYellow }]);
+                wsData.push([{ v: 'Dolencias:', s: sLabel }, { v: r.dolencias || '', s: sYellow }]);
+                wsData.push([{ v: 'Actividades:', s: sLabel }, { v: r.actividades || '', s: sYellow }]);
+                wsData.push(['']);
+
+                // 4. Datos Biométricos
+                wsData.push([{ v: 'DATOS BIOMÉTRICOS', s: sHeader }]);
+                wsData.push([{ v: 'Peso (Kg):', s: sLabel }, { v: r.peso_kg || '', s: sYellow }]);
+                wsData.push([{ v: 'Altura (m):', s: sLabel }, { v: r.altura_m || '', s: sYellow }]);
+                wsData.push([{ v: 'Antigüedad (meses):', s: sLabel }, { v: r.antiguedad_meses || '', s: sYellow }]);
+                wsData.push([{ v: 'Saturación O2:', s: sLabel }, { v: r.o2 || '', s: sYellow }]);
+                wsData.push([{ v: 'Presión (Pc):', s: sLabel }, { v: r.presion_pc || '', s: sYellow }]);
+                wsData.push([{ v: 'Fuerza Agarre (Kg):', s: sLabel }, { v: r.fuerza_agarre_kg || '', s: sYellow }]);
+                wsData.push([{ v: 'Mano Agarre:', s: sLabel }, { v: r.mano_agarre || '', s: sYellow }]);
+                wsData.push(['']);
+
+                // 5. Manipulación de Cargas
+                wsData.push([{ v: 'MANIPULACIÓN DE CARGAS', s: sHeader }]);
+                wsData.push([{ v: 'Carga Peso (Kg):', s: sLabel }, { v: r.carga_peso_kg || '', s: sYellow }]);
+                wsData.push([{ v: 'Tipo de Agarre:', s: sLabel }, { v: r.carga_agarre || '', s: sYellow }]);
+                wsData.push([{ v: 'Frecuencia:', s: sLabel }, { v: r.carga_frecuencia || '', s: sYellow }]);
+                wsData.push([{ v: 'Distancia (m):', s: sLabel }, { v: r.carga_distancia_m || '', s: sYellow }]);
+                wsData.push([{ v: 'Ayuda Mecánica:', s: sLabel }, { v: r.carga_ayuda || '', s: sYellow }]);
+                wsData.push([{ v: 'Descripción Carga:', s: sLabel }, { v: r.carga_descripcion || '', s: sYellow }]);
+                wsData.push(['']);
+
+                // 6. Observaciones
+                wsData.push([{ v: 'OBSERVACIONES', s: sHeader }]);
+                wsData.push([{ v: r.observaciones || 'Sin observaciones', s: sYellow }]);
                 
-                // (Para simplificar la copia, asumo que mantienes tu lógica interna de exportToExcel que ya funcionaba)
-                 const ws = XLSX.utils.aoa_to_sheet(wsData);
-                 // ... merges y cols ...
-                 XLSX.utils.book_append_sheet(wb, ws, `Reg ${idx + 1}`);
+                // Crear la hoja
+                const ws = XLSX.utils.aoa_to_sheet(wsData);
+                
+                // Definir ancho de columnas
+                ws['!cols'] = [{ wch: 25 }, { wch: 50 }]; 
+
+                // Uniones de celda (Merges) para los títulos
+                ws['!merges'] = [
+                    { s: {r:0, c:0}, e: {r:0, c:1} }, // Título 1
+                    { s: {r:1, c:0}, e: {r:1, c:1} }, // Título 2
+                    { s: {r:2, c:0}, e: {r:2, c:1} }, // Título 3
+                    { s: {r:4, c:0}, e: {r:4, c:1} }, // Header Empresa
+                    { s: {r:7, c:0}, e: {r:7, c:1} }, // Header Trabajador
+                    { s: {r:15, c:0}, e: {r:15, c:1} }, // Header Biometricos
+                    { s: {r:23, c:0}, e: {r:23, c:1} }, // Header Cargas
+                    { s: {r:30, c:0}, e: {r:30, c:1} }, // Header Observaciones
+                ];
+
+                // Agregar la hoja al libro (Una hoja por registro)
+                XLSX.utils.book_append_sheet(wb, ws, `Reg ${idx + 1}`);
             });
 
-            // Si omití las filas del excel en este bloque para ahorrar espacio,
-            // asegúrate de usar tu función exportToExcel completa original.
-            // Este bloque es solo ilustrativo de dónde va.
-             XLSX.writeFile(wb, `Ergonomia_${empresaNombre}_${fechaMonitoreo}.xlsx`);
+            XLSX.writeFile(wb, `Ergonomia_${empresaNombre}_${fechaMonitoreo}.xlsx`);
         } catch (err) {
             console.error('Error exportando a Excel:', err);
             message.error('No se pudo exportar el Excel.');
@@ -415,17 +470,8 @@ const ErgonomiaPage = () => {
             if (error) throw error;
 
             const mapped = (data || []).map((r) => {
-                let imageUrls = [];
-                if (Array.isArray(r.image_urls)) imageUrls = r.image_urls;
-                else if (typeof r.image_urls === 'string' && r.image_urls.trim() !== '') {
-                    try {
-                         const parsed = JSON.parse(r.image_urls);
-                         if(Array.isArray(parsed)) imageUrls = parsed;
-                         else imageUrls = r.image_urls.split(',').map((s) => s.trim());
-                    } catch {
-                         imageUrls = r.image_urls.split(',').map((s) => s.trim());
-                    }
-                }
+                // --- CAMBIO: USAR parseImageUrls ---
+                let imageUrls = parseImageUrls(r.image_urls);
 
                 return {
                     ...r,
@@ -656,7 +702,30 @@ const ErgonomiaPage = () => {
         { title: 'Carga: Distancia (m)', dataIndex: 'carga_distancia_m', key: 'carga_distancia_m', width: 100 },
         { title: 'Carga: Ayuda', dataIndex: 'carga_ayuda', key: 'carga_ayuda', width: 150, ellipsis: true },
         { title: 'Carga: Descripción', dataIndex: 'carga_descripcion', key: 'carga_descripcion', width: 250, ellipsis: true },
-        { title: 'Imágenes', dataIndex: 'image_urls', key: 'image_urls', width: 120, render: (imgs) => { const list = Array.isArray(imgs) ? imgs : []; if (!list.length) return <Text type="secondary">Ninguna</Text>; return (<Button type="link" icon={<EyeOutlined />} onClick={() => openImageViewer(list, 0)} size="small" > Ver imagen </Button>); }, },
+        
+        // --- MODIFICACIÓN 1: Columna Imágenes al estilo ParticulasPage ---
+        { 
+            title: 'Imágenes', 
+            dataIndex: 'image_urls', 
+            key: 'image_urls', 
+            width: 120, 
+            render: (imgs) => { 
+                // Usamos la función segura parseImageUrls
+                const list = parseImageUrls(imgs); 
+                if (!list.length) return <Text type="secondary">Ninguna</Text>; 
+                return (
+                    <Button 
+                        type="link" 
+                        icon={<EyeOutlined />} 
+                        onClick={() => openImageViewer(list, 0)} 
+                        size="small" 
+                    > 
+                        Ver imagen 
+                    </Button>
+                ); 
+            }, 
+        },
+
         { title: 'Ubicación', dataIndex: 'location', key: 'location', width: 210, render: (v) => renderLocation(v), },
         { title: 'Observaciones', dataIndex: 'observaciones', key: 'observaciones', ellipsis: true, width: 240, },
         { title: 'Registrado por', dataIndex: 'created_by', key: 'created_by', width: 120, fixed: 'right', ellipsis: true, render: (v) => { if (!v) return <Text type="secondary">N/A</Text>; const display = usersById[v]; return display ? <Tooltip title={display}>{display}</Tooltip> : <Text type="secondary">{v.slice(0, 8)}...</Text>; }, },
@@ -807,16 +876,27 @@ const ErgonomiaPage = () => {
                 </Form>
             </Modal>
 
-            {/* Visor de imágenes */}
-            <Modal open={imageViewerOpen} onCancel={() => setImageViewerOpen(false)} footer={
-                imageViewerList.length > 1 ? [
-                    <Button key="prev" onClick={() => setImageViewerIndex((prev) => (prev - 1 + imageViewerList.length) % imageViewerList.length)}>Anterior</Button>,
-                    <Button key="next" type="primary" onClick={() => setImageViewerIndex((prev) => (prev + 1) % imageViewerList.length)}>Siguiente</Button>,
-                ] : null
-            } width={720} title="Imagen del registro">
+            {/* --- MODIFICACIÓN 2: MODAL VISOR DE IMÁGENES (Estilo ParticulasPage) --- */}
+            <Modal 
+                open={imageViewerOpen} 
+                onCancel={() => setImageViewerOpen(false)} 
+                footer={
+                    imageViewerList.length > 1 ? [
+                        <Button key="prev" onClick={() => setImageViewerIndex((prev) => (prev - 1 + imageViewerList.length) % imageViewerList.length)}>Anterior</Button>,
+                        <Button key="next" type="primary" onClick={() => setImageViewerIndex((prev) => (prev + 1) % imageViewerList.length)}>Siguiente</Button>,
+                    ] : null
+                } 
+                width={720} 
+                title="Imagen del registro"
+            >
                 {imageViewerList.length ? (
                     <div style={{ textAlign: 'center' }}>
-                        <img src={imageViewerList[imageViewerIndex]} alt="registro" style={{ maxWidth: '100%', maxHeight: '60vh', objectFit: 'contain' }} />
+                        <img 
+                            src={imageViewerList[imageViewerIndex]} 
+                            alt="registro" 
+                            style={{ maxWidth: '100%', maxHeight: '60vh', objectFit: 'contain' }} 
+                            onError={(e) => { e.target.onerror = null; e.target.src = 'https://via.placeholder.com/400x300?text=Error+Cargando+Imagen'; }}
+                        />
                         <div style={{ marginTop: 8 }}>{imageViewerIndex + 1} / {imageViewerList.length}</div>
                     </div>
                 ) : (

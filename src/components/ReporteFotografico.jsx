@@ -1,7 +1,7 @@
 import React from 'react';
 import { Page, Text, View, Document, StyleSheet, Image } from '@react-pdf/renderer';
 
-// Estilos Base actualizados para el nuevo diseño
+// Estilos Base Restaurados al Diseño Original
 const styles = StyleSheet.create({
   page: {
     paddingTop: 70, // Espacio para el encabezado fijo
@@ -49,66 +49,75 @@ const styles = StyleSheet.create({
     textAlign: 'right'
   },
   
-  // --- ESTILOS DE LA TARJETA MODIFICADOS ---
+  // --- ESTILOS DE LA TARJETA ---
   gridItem: {
     padding: 5,
     boxSizing: 'border-box',
   },
-  // La tarjeta ahora no tiene padding, el borde lo es todo
+  // La tarjeta completa
   card: {
     border: '1pt solid #e0e0e0',
     height: '100%',
     display: 'flex',
     flexDirection: 'column',
-    justifyContent: 'flex-start', // Alinea al inicio
-    borderRadius: 3
+    justifyContent: 'space-between', 
+    borderRadius: 3,
+    overflow: 'hidden'
   },
-  // Nuevo: Encabezado de la tarjeta (celeste)
+  // Encabezado de la tarjeta (celeste)
   cardHeader: {
     backgroundColor: '#f0f5ff', // Celeste claro
-    padding: 5,
+    paddingVertical: 4,
+    paddingHorizontal: 2,
     borderBottom: '1pt solid #e0e0e0',
     width: '100%',
-    alignItems: 'center' // <-- AÑADIDO: Centra los bloques de texto
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0
   },
   cardHeaderText: {
-    fontSize: 9,
+    fontSize: 8,
     fontFamily: 'Helvetica',
     color: '#333',
-    textAlign: 'center' // <-- AÑADIDO: Centra el texto dentro del bloque
+    textAlign: 'center',
+    marginBottom: 1
   },
-  // La imagen ocupa el espacio restante
+  // Contenedor de la imagen (Original style)
   imageContainer: {
-    flexGrow: 1, // Ocupa el espacio disponible
-    padding: 5,
+    flexGrow: 1, 
     width: '100%',
-    height: '70%', // Damos altura para que se calcule
+    padding: 2,
     display: 'flex',
     alignItems: 'center',
-    justifyContent: 'center'
+    justifyContent: 'center',
+    minHeight: 0 
   },
   image: {
-    objectFit: 'contain',
+    objectFit: 'contain', // Mantiene proporción (Vertical/Horizontal)
+    objectPosition: 'center',
     width: '100%',
     height: '100%'
   },
-  // Nuevo: Footer de la tarjeta
+  // Footer de la tarjeta
   cardFooter: {
     borderTop: '1pt solid #e0e0e0',
     padding: 4,
     width: '100%',
-    alignItems: 'center'
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#fff',
+    flexShrink: 0 
   },
   cardFooterText: {
     fontSize: 8,
     fontFamily: 'Helvetica',
     color: '#555'
   },
-footer: {
+  footer: {
     position: 'absolute',
     bottom: 15,
-    left: 30, // Alineado con el padding de la página
-    right: 30, // Alineado con el padding de la página
+    left: 30, 
+    right: 30, 
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
@@ -132,7 +141,7 @@ footer: {
   }
 });
 
-// Helper para paginar (sin cambios)
+// Helper para paginar
 const chunkArray = (array, size) => {
   const chunked = [];
   for (let i = 0; i < array.length; i += size) {
@@ -141,7 +150,6 @@ const chunkArray = (array, size) => {
   return chunked;
 };
 
-// Componente (sin cambios en props)
 export const ReporteFotografico = ({ data, empresa, layout = "2x4", tituloMonitoreo }) => {
   const [colsStr, rowsStr] = layout.split('x');
   const cols = parseInt(colsStr);
@@ -156,7 +164,7 @@ export const ReporteFotografico = ({ data, empresa, layout = "2x4", tituloMonito
       {pages.map((pageItems, i) => (
         <Page key={i} size="LETTER" style={styles.page}>
           
-          {/* ENCABEZADO FIJO (Sin cambios) */}
+          {/* ENCABEZADO FIJO */}
           <View style={styles.header} fixed>
             <View style={styles.headerLeft}>
               <Text style={styles.headerTitle}>REPORTE FOTOGRÁFICO</Text>
@@ -175,22 +183,24 @@ export const ReporteFotografico = ({ data, empresa, layout = "2x4", tituloMonito
           {pageItems.map((item, j) => (
             <View key={j} style={[styles.gridItem, { width: itemWidth, height: itemHeight }]}>
               
-              {/* --- ESTRUCTURA DE TARJETA ACTUALIZADA --- */}
               <View style={styles.card}>
-                
                 {/* Encabezado con datos */}
                 <View style={styles.cardHeader}>
                   <Text style={styles.cardHeaderText}>Código: {item.codigo || '-'}</Text>
                   <Text style={styles.cardHeaderText}>Área: {item.area || '-'}</Text>
-                  <Text style={styles.cardHeaderText}>Punto de monitoreo: {item.puesto || '-'}</Text>
+                  <Text style={styles.cardHeaderText}>Punto: {item.puesto || '-'}</Text>
                 </View>
 
                 {/* Imagen */}
                 <View style={styles.imageContainer}>
-                  <Image 
-                    src={item.imageUrl} 
-                    style={styles.image} 
-                  />
+                  {item.imageUrl ? (
+                    <Image 
+                      src={item.imageUrl} 
+                      style={styles.image} 
+                    />
+                  ) : (
+                    <Text style={{ fontSize: 8, color: '#999' }}>Sin Imagen</Text>
+                  )}
                 </View>
 
                 {/* Footer con Fecha/Hora */}
@@ -202,10 +212,8 @@ export const ReporteFotografico = ({ data, empresa, layout = "2x4", tituloMonito
             </View>
           ))}
 
-          {/* PIE DE PÁGINA ACTUALIZADO */}
+          {/* PIE DE PÁGINA */}
           <View style={styles.footer} fixed>
-            
-            {/* Lado Izquierdo */}
             <View style={styles.footerLeft}>
               <Text style={styles.footerText}>
                 Realizado por: <Text style={styles.footerBold}>PACHABOL S.R.L.</Text>
@@ -214,8 +222,6 @@ export const ReporteFotografico = ({ data, empresa, layout = "2x4", tituloMonito
                 Generado por: <Text style={styles.footerBold}>Metric v3.0</Text>
               </Text>
             </View>
-
-            {/* Lado Derecho */}
             <Text style={styles.footerRight} render={({ pageNumber, totalPages }) => (
               `Página: ${pageNumber} de ${totalPages}`
             )} />
