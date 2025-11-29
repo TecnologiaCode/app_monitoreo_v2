@@ -1055,4 +1055,4 @@ const EstresCalorPage = () => {
   );
 };
 
-export default EstresCalorPage;
+export default EstresCalorPage; //hasta qui 29/11/2025 sabado
