@@ -16,6 +16,10 @@ import 'dayjs/locale/es';
 import utc from 'dayjs/plugin/utc';
 import * as XLSX from 'xlsx';
 
+// ► NUEVO: librerías para descargar todas las imágenes en ZIP
+import JSZip from 'jszip';
+import { saveAs } from 'file-saver';
+
 // IMPORTS DEL REPORTE FOTOGRÁFICO
 import { PDFViewer } from '@react-pdf/renderer';
 import { ReporteFotografico } from '../components/ReporteFotografico';
@@ -535,6 +539,71 @@ const EstresCalorPage = () => {
     }, 500);
   };
 
+  /* --------- DESCARGAR TODAS LAS IMÁGENES EN ZIP (NUEVO) --------- */
+  const downloadAllImages = async () => {
+    try {
+      // Reunir todas las URLs de todas las filas
+      const allUrls = [];
+      rows.forEach((r) => {
+        const imgs = getImagesArray(r);
+        imgs.forEach((u) => allUrls.push(u));
+      });
+
+      if (!allUrls.length) {
+        message.warning('No hay imágenes registradas en este monitoreo.');
+        return;
+      }
+
+      message.loading({
+        content: 'Preparando descarga de imágenes...',
+        key: 'zipCalor',
+        duration: 0
+      });
+
+      const uniqueUrls = Array.from(new Set(allUrls.filter(Boolean)));
+      const zip = new JSZip();
+      const folder = zip.folder('estres_calor');
+
+      const downloadPromises = uniqueUrls.map(async (url, index) => {
+        try {
+          const resp = await fetch(url);
+          if (!resp.ok) {
+            console.warn('No se pudo descargar', url);
+            return;
+          }
+          const blob = await resp.blob();
+          let fileName = url.split('/').pop() || `imagen_${index + 1}.jpg`;
+          fileName = fileName.split('?')[0];
+          folder.file(fileName, blob);
+        } catch (err) {
+          console.error('Error descargando', url, err);
+        }
+      });
+
+      await Promise.all(downloadPromises);
+      const content = await zip.generateAsync({ type: 'blob' });
+
+      const empresaSafe = (headerInfo.empresa || 'empresa')
+        .replace(/[^\w\-]+/g, '_')
+        .substring(0, 40);
+      const fechaSafe = (headerInfo.fecha || '').replace(/[^\d]/g, '');
+      const zipName = `estres_calor_imagenes_${empresaSafe}_${fechaSafe || 'monitoreo'}.zip`;
+
+      saveAs(content, zipName);
+
+      message.success({
+        content: 'Descarga lista.',
+        key: 'zipCalor'
+      });
+    } catch (err) {
+      console.error(err);
+      message.error({
+        content: 'No se pudieron descargar las imágenes.',
+        key: 'zipCalor'
+      });
+    }
+  };
+
   /* --------- CRUD --------- */
   const handleAdd = () => { setSelected(null); setIsFormOpen(true); };
   const handleEdit = (rec) => { setSelected(rec); setIsFormOpen(true); };
@@ -719,21 +788,21 @@ const EstresCalorPage = () => {
       render: (v) => renderLocation(v)
     },
 
-      {
-          title: 'IMÁGENES',
-          dataIndex: 'image_urls',
-          key: 'image_urls',
-          width: 140,
-          render: (imgs) => {
-            const list = Array.isArray(imgs) ? imgs : [];
-            if (!list.length) return <Text type="secondary">Ninguna</Text>;
-            return (
-              <Button type="link" icon={<EyeOutlined />} onClick={() => openImageViewer(list, 0)} size="small">
-                Ver imagen
-              </Button>
-            );
-          },
-        },
+    {
+      title: 'IMÁGENES',
+      dataIndex: 'image_urls',
+      key: 'image_urls',
+      width: 140,
+      render: (imgs) => {
+        const list = Array.isArray(imgs) ? imgs : [];
+        if (!list.length) return <Text type="secondary">Ninguna</Text>;
+        return (
+          <Button type="link" icon={<EyeOutlined />} onClick={() => openImageViewer(list, 0)} size="small">
+            Ver imagen
+          </Button>
+        );
+      },
+    },
 
     {
       title: 'OBSERVACIÓN',
@@ -788,6 +857,12 @@ const EstresCalorPage = () => {
             <Button onClick={() => navigate(`/proyectos/${projectId}/monitoreo`)}>
               <ArrowLeftOutlined /> Volver a Monitoreos
             </Button>
+
+            {/* NUEVO: botón para descargar todas las imágenes en ZIP */}
+            <Button onClick={downloadAllImages}>
+              Descargar Imágenes
+            </Button>
+
             <Button
               icon={<FileExcelOutlined />}
               onClick={() => exportToExcel(rows, headerInfo)}
@@ -1055,4 +1130,4 @@ const EstresCalorPage = () => {
   );
 };
 
-export default EstresCalorPage; //hasta qui 29/11/2025 sabado
+export default EstresCalorPage;

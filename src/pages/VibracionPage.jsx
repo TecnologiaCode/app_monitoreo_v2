@@ -20,8 +20,8 @@ import {
   Col,
   Descriptions,
   Pagination,
-  Checkbox, // <-- NUEVO
-  Divider   // <-- NUEVO
+  Checkbox,
+  Divider
 } from 'antd';
 import {
   PlusOutlined,
@@ -33,10 +33,10 @@ import {
   ArrowLeftOutlined,
   FileExcelOutlined,
   EyeOutlined,
-  FilePdfOutlined, // <-- NUEVO
-  SaveOutlined,    // <-- NUEVO
-  LeftOutlined,    // <-- NUEVO
-  RightOutlined    // <-- NUEVO
+  FilePdfOutlined,
+  SaveOutlined,
+  LeftOutlined,
+  RightOutlined
 } from '@ant-design/icons';
 
 import { Link, useNavigate, useParams } from 'react-router-dom';
@@ -45,7 +45,11 @@ import { supabase } from '../supabaseClient.js';
 import dayjs from 'dayjs';
 import 'dayjs/locale/es';
 import utc from 'dayjs/plugin/utc';
-import * as XLSX from 'xlsx';          // (tu versión nueva de Excel)
+import * as XLSX from 'xlsx';
+
+// ► NUEVO: librerías para descargar todas las imágenes en ZIP
+import JSZip from 'jszip';
+import { saveAs } from 'file-saver';
 
 // IMPORTS DEL REPORTE FOTOGRÁFICO
 import { PDFViewer } from '@react-pdf/renderer';
@@ -99,17 +103,17 @@ const posturaDisplay = (postura, otro) =>
 
 // Helper para obtener array de imagenes limpio
 const getImagesArray = (reg) => {
-    if (Array.isArray(reg.image_urls)) return reg.image_urls;
-    if (typeof reg.image_urls === 'string' && reg.image_urls.trim() !== '') {
-        try {
-            const parsed = JSON.parse(reg.image_urls);
-            if(Array.isArray(parsed)) return parsed;
-            return [reg.image_urls];
-        } catch {
-            return reg.image_urls.split(',').map(s => s.trim());
-        }
+  if (Array.isArray(reg.image_urls)) return reg.image_urls;
+  if (typeof reg.image_urls === 'string' && reg.image_urls.trim() !== '') {
+    try {
+      const parsed = JSON.parse(reg.image_urls);
+      if(Array.isArray(parsed)) return parsed;
+      return [reg.image_urls];
+    } catch {
+      return reg.image_urls.split(',').map(s => s.trim());
     }
-    return [];
+  }
+  return [];
 };
 
 /* ============================ Export a Excel ============================ */
@@ -542,6 +546,71 @@ const VibracionPage = () => {
     { title: 'Acciones', key: 'acciones', fixed: 'right', width: 120, render: (_, record) => ( <Space size="small"> <Tooltip title="Editar"> <Button icon={<EditOutlined />} onClick={() => handleEdit(record)} /> </Tooltip> <Tooltip title="Eliminar"> <Button danger icon={<DeleteOutlined />} onClick={() => handleDelete(record)} /> </Tooltip> </Space> ) },
   ];
 
+  /* --------- DESCARGAR TODAS LAS IMÁGENES EN ZIP (NUEVO) --------- */
+  const downloadAllImages = async () => {
+    try {
+      // Reunir todas las URLs de todas las filas
+      const allUrls = [];
+      rows.forEach((r) => {
+        const imgs = getImagesArray(r);
+        imgs.forEach((u) => allUrls.push(u));
+      });
+
+      if (!allUrls.length) {
+        message.warning('No hay imágenes registradas en este monitoreo.');
+        return;
+      }
+
+      message.loading({
+        content: 'Preparando descarga de imágenes...',
+        key: 'zipVibracion',
+        duration: 0
+      });
+
+      const uniqueUrls = Array.from(new Set(allUrls.filter(Boolean)));
+      const zip = new JSZip();
+      const folder = zip.folder('vibracion');
+
+      const downloadPromises = uniqueUrls.map(async (url, index) => {
+        try {
+          const resp = await fetch(url);
+          if (!resp.ok) {
+            console.warn('No se pudo descargar', url);
+            return;
+          }
+          const blob = await resp.blob();
+          let fileName = url.split('/').pop() || `imagen_${index + 1}.jpg`;
+          fileName = fileName.split('?')[0];
+          folder.file(fileName, blob);
+        } catch (err) {
+          console.error('Error descargando', url, err);
+        }
+      });
+
+      await Promise.all(downloadPromises);
+      const content = await zip.generateAsync({ type: 'blob' });
+
+      const empresaSafe = (headerInfo.empresa || 'empresa')
+        .replace(/[^\w\-]+/g, '_')
+        .substring(0, 40);
+      const fechaSafe = (headerInfo.fecha || '').replace(/[^\d]/g, '');
+      const zipName = `vibracion_imagenes_${empresaSafe}_${fechaSafe || 'monitoreo'}.zip`;
+
+      saveAs(content, zipName);
+
+      message.success({
+        content: 'Descarga lista.',
+        key: 'zipVibracion'
+      });
+    } catch (err) {
+      console.error(err);
+      message.error({
+        content: 'No se pudieron descargar las imágenes.',
+        key: 'zipVibracion'
+      });
+    }
+  };
+
   return (
     <>
       <Breadcrumb style={{ margin: '16px 0' }}>
@@ -556,6 +625,8 @@ const VibracionPage = () => {
         <Col>
           <Space>
             <Button onClick={() => navigate(`/proyectos/${projectId}/monitoreo`)}><ArrowLeftOutlined /> Volver a Monitoreos</Button>
+            {/* NUEVO: botón para descargar todas las imágenes en ZIP */}
+            <Button onClick={downloadAllImages}>Descargar Imágenes</Button>
             <Button icon={<FileExcelOutlined />} onClick={() => exportToExcel(rows, headerInfo)}>Exportar a Excel</Button>
             <Button icon={<FilePdfOutlined />} onClick={handleOpenPdf} style={{ backgroundColor: '#ff4d4f', color: 'white', borderColor: '#ff4d4f' }}>Reporte Fotos</Button>
             <Button type="primary" icon={<PlusOutlined />} onClick={handleAdd}>Agregar</Button>

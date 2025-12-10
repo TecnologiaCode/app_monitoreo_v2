@@ -46,7 +46,10 @@ import { supabase } from '../supabaseClient.js';
 import dayjs from 'dayjs';
 import 'dayjs/locale/es';
 import utc from 'dayjs/plugin/utc';
-import * as XLSX from 'xlsx';          // (tu versión nueva de Excel)
+import * as XLSX from 'xlsx';
+
+// IMPORTAR LA FUNCIÓN CENTRALIZADA
+import { downloadImagesAsZip } from '../utils/downloadImagesAsZip.js';
 
 // IMPORTS DEL REPORTE FOTOGRÁFICO
 import { PDFViewer } from '@react-pdf/renderer';
@@ -114,10 +117,10 @@ const VentilacionPage = () => {
 
   // --- Estados PDF y Selección ---
   const [isPdfModalVisible, setIsPdfModalVisible] = useState(false);
-  const [pdfStep, setPdfStep] = useState('selection'); 
+  const [pdfStep, setPdfStep] = useState('selection');
   const [pdfData, setPdfData] = useState([]);
-  const [tempSelections, setTempSelections] = useState({}); 
-  const [recordSelections, setRecordSelections] = useState({}); 
+  const [tempSelections, setTempSelections] = useState({});
+  const [recordSelections, setRecordSelections] = useState({});
   const [isSavingSelection, setIsSavingSelection] = useState(false);
   const [pdfLayout, setPdfLayout] = useState('2x4');
 
@@ -160,16 +163,63 @@ const VentilacionPage = () => {
   const getImagesArray = (reg) => {
     if (Array.isArray(reg.image_urls)) return reg.image_urls;
     if (typeof reg.image_urls === 'string' && reg.image_urls.trim() !== '') {
-        try {
-            const parsed = JSON.parse(reg.image_urls);
-            if(Array.isArray(parsed)) return parsed;
-            return [reg.image_urls]; 
-        } catch {
-            return reg.image_urls.split(',').map(s => s.trim());
-        }
+      try {
+        const parsed = JSON.parse(reg.image_urls);
+        if (Array.isArray(parsed)) return parsed;
+        return [reg.image_urls];
+      } catch {
+        return reg.image_urls.split(',').map(s => s.trim()).filter(Boolean);
+      }
     }
     return [];
   };
+
+  /* ========================= DESCARGA DE IMÁGENES (REFACTORIZADO) ========================= */
+  const handleDownloadAllImages = async () => {
+    try {
+      // 1. Recolectar TODAS las URLs planas de todos los registros
+      const allUrls = registros.flatMap(r => getImagesArray(r));
+
+      if (allUrls.length === 0) {
+        message.warning('No hay imágenes registradas en este monitoreo.');
+        return;
+      }
+
+      // 2. Construir el nombre del archivo ZIP
+      const empresaSafe = (proyectoInfo?.nombre || 'empresa')
+        .replace(/[^\w\-]+/g, '_')
+        .substring(0, 40);
+      const fechaSafe = (proyectoInfo?.created_at ? formatFechaUTC(proyectoInfo.created_at) : '')
+        .replace(/[^\d]/g, '');
+      const zipName = `ventilacion_imagenes_${empresaSafe}_${fechaSafe || 'monitoreo'}.zip`;
+
+      message.loading({
+        content: 'Preparando descarga de imágenes...',
+        key: 'zipVentilacion',
+        duration: 0
+      });
+
+      // 3. Llamar a la función centralizada
+      await downloadImagesAsZip(allUrls, { zipName, folderName: 'ventilacion' });
+
+      message.success({
+        content: 'Descarga lista.',
+        key: 'zipVentilacion'
+      });
+
+    } catch (err) {
+      if (err.message === 'No hay imágenes para descargar') {
+        // Ya se maneja con el check inicial, pero por si acaso la utilidad central lanza ese error
+      } else {
+        console.error(err);
+        message.error({
+          content: 'No se pudieron descargar las imágenes.',
+          key: 'zipVentilacion'
+        });
+      }
+    }
+  };
+  /* ========================================================================================= */
 
   /* ================ LÓGICA PDF Y SELECCIÓN ================ */
 
@@ -200,16 +250,16 @@ const VentilacionPage = () => {
   const handleOpenPdf = () => {
     const registrosConFotos = registros.filter(r => getImagesArray(r).length > 0);
     if (registrosConFotos.length === 0) {
-        message.warning("No hay registros con imágenes.");
-        return;
+      message.warning("No hay registros con imágenes.");
+      return;
     }
     const initialSelections = {};
     const initialRecordSelections = {};
     registrosConFotos.forEach(r => {
-        const imgs = getImagesArray(r);
-        const savedIndex = r.selected_image_index || 0;
-        initialSelections[r.id] = savedIndex < imgs.length ? savedIndex : 0;
-        initialRecordSelections[r.id] = true; 
+      const imgs = getImagesArray(r);
+      const savedIndex = r.selected_image_index || 0;
+      initialSelections[r.id] = savedIndex < imgs.length ? savedIndex : 0;
+      initialRecordSelections[r.id] = true;
     });
     setTempSelections(initialSelections);
     setRecordSelections(initialRecordSelections);
@@ -221,52 +271,52 @@ const VentilacionPage = () => {
     setIsSavingSelection(true);
     const loadingMsg = message.loading("Generando reporte...", 0);
     try {
-        const registrosConFotos = registros.filter(r => getImagesArray(r).length > 0);
-        const registrosSeleccionados = registrosConFotos.filter(r => recordSelections[r.id] === true);
+      const registrosConFotos = registros.filter(r => getImagesArray(r).length > 0);
+      const registrosSeleccionados = registrosConFotos.filter(r => recordSelections[r.id] === true);
 
-        if (registrosSeleccionados.length === 0) {
-            message.warning("No ha seleccionado ningún registro.");
-            setIsSavingSelection(false);
-            loadingMsg();
-            return;
-        }
-
-        const supabaseTasks = [];
-        const dataForPdf = [];
-        let i = 0;
-
-        for (const r of registrosSeleccionados) {
-            const imgs = getImagesArray(r);
-            const selectedIdx = tempSelections[r.id] !== undefined ? tempSelections[r.id] : 0;
-            const finalIdx = selectedIdx < imgs.length ? selectedIdx : 0;
-            const originalUrl = imgs[finalIdx];
-            const codigo = `VEN-${String(i + 1).padStart(2, '0')}`;
-
-            dataForPdf.push({
-                imageUrl: originalUrl, 
-                area: r.area || 'N/A', // Ahora usamos el campo 'area' de la BD
-                puesto: r.local_trabajo, 
-                codigo: codigo,
-                fechaHora: `${formatFechaUTC(r.created_at)} - ${formatHoraUTC(r.created_at)}`
-            });
-
-            supabaseTasks.push(
-                supabase.from(VENTILACION_TABLE_NAME).update({ selected_image_index: finalIdx }).eq('id', r.id)
-            );
-            i++;
-        }
-
-        await Promise.all(supabaseTasks);
-        fetchRegistros(); 
-        setPdfData(dataForPdf);
-        setPdfStep('view'); 
-        message.success("Reporte generado");
-    } catch (error) {
-        console.error("Error generando PDF:", error);
-        message.error("Ocurrió un error inesperado.");
-    } finally {
-        loadingMsg();
+      if (registrosSeleccionados.length === 0) {
+        message.warning("No ha seleccionado ningún registro.");
         setIsSavingSelection(false);
+        loadingMsg();
+        return;
+      }
+
+      const supabaseTasks = [];
+      const dataForPdf = [];
+      let i = 0;
+
+      for (const r of registrosSeleccionados) {
+        const imgs = getImagesArray(r);
+        const selectedIdx = tempSelections[r.id] !== undefined ? tempSelections[r.id] : 0;
+        const finalIdx = selectedIdx < imgs.length ? selectedIdx : 0;
+        const originalUrl = imgs[finalIdx];
+        const codigo = `VEN-${String(i + 1).padStart(2, '0')}`;
+
+        dataForPdf.push({
+          imageUrl: originalUrl,
+          area: r.area || 'N/A', // Ahora usamos el campo 'area' de la BD
+          puesto: r.local_trabajo,
+          codigo: codigo,
+          fechaHora: `${formatFechaUTC(r.created_at)} - ${formatHoraUTC(r.created_at)}`
+        });
+
+        supabaseTasks.push(
+          supabase.from(VENTILACION_TABLE_NAME).update({ selected_image_index: finalIdx }).eq('id', r.id)
+        );
+        i++;
+      }
+
+      await Promise.all(supabaseTasks);
+      fetchRegistros(true);
+      setPdfData(dataForPdf);
+      setPdfStep('view');
+      message.success("Reporte generado");
+    } catch (error) {
+      console.error("Error generando PDF:", error);
+      message.error("Ocurrió un error inesperado.");
+    } finally {
+      loadingMsg();
+      setIsSavingSelection(false);
     }
   };
 
@@ -372,36 +422,25 @@ const VentilacionPage = () => {
       if (error) throw error;
 
       const mapped = (data || []).map((r) => {
-        let imgs = [];
-        if (Array.isArray(r.image_urls)) {
-          imgs = r.image_urls;
-        } else if (typeof r.image_urls === 'string' && r.image_urls.trim() !== '') {
-          try {
-            const parsed = JSON.parse(r.image_urls);
-            if (Array.isArray(parsed)) imgs = parsed;
-            else imgs = [r.image_urls];
-          } catch {
-            imgs = r.image_urls.split(',').map((s) => s.trim());
-          }
-        }
-        
+        let imgs = getImagesArray(r);
+
         let loc = r.location;
         if (typeof r.location === 'string' && r.location.trim() !== '') {
-          try { loc = JSON.parse(r.location); } catch {}
+          try { loc = JSON.parse(r.location); } catch { }
         }
 
         return { ...r, image_urls: imgs, location: loc };
       });
 
       setRegistros(mapped);
-      setCurrentPage(1);
+      if (!isBackground) setCurrentPage(1);
 
       const createdByIds = Array.from(new Set((mapped || []).map((m) => m.created_by).filter((v) => v && typeof v === 'string')));
       if (createdByIds.length > 0) await fetchUsersByIds(createdByIds);
       else setUsersById({});
     } catch (e) {
       console.error('Error ventilación:', e);
-      message.error('No se pudieron cargar los datos de ventilación.');
+      if (!isBackground) message.error('No se pudieron cargar los datos de ventilación.');
       setRegistros([]);
     } finally {
       if (!isBackground) setLoading(false);
@@ -669,24 +708,24 @@ const VentilacionPage = () => {
 
   const columns = [
     { title: 'N°', width: 60, fixed: 'left', render: (_, __, i) => (currentPage - 1) * pageSize + i + 1 },
-     // Nueva columna Fecha
-           {
-               title: 'FECHA',
-               dataIndex: 'measured_at',
-               key: 'measured_date',
-               sorter: (a, b) => dayjs(a.measured_at).unix() - dayjs(b.measured_at).unix(),
-               defaultSortOrder: 'descend',
-               width: 100, render: (t) => formatFechaUTC(t),
-           },
-           // Columna Hora (se conserva)
-           {
-               title: 'HORA',
-               dataIndex: 'measured_at',
-               key: 'measured_time',
-               sorter: (a, b) => dayjs(a.measured_at).unix() - dayjs(b.measured_at).unix(),
-               width: 70,
-               render: (t) => formatHoraUTC(t),
-           },
+    // Nueva columna Fecha
+    {
+      title: 'FECHA',
+      dataIndex: 'measured_at',
+      key: 'measured_date',
+      sorter: (a, b) => dayjs(a.measured_at).unix() - dayjs(b.measured_at).unix(),
+      defaultSortOrder: 'descend',
+      width: 100, render: (t) => formatFechaUTC(t),
+    },
+    // Columna Hora (se conserva)
+    {
+      title: 'HORA',
+      dataIndex: 'measured_at',
+      key: 'measured_time',
+      sorter: (a, b) => dayjs(a.measured_at).unix() - dayjs(b.measured_at).unix(),
+      width: 70,
+      render: (t) => formatHoraUTC(t),
+    },
     // NUEVA COLUMNA EN TABLA UI
     { title: 'Área', dataIndex: 'area', width: 150, ellipsis: true },
     { title: 'Local de trabajo', dataIndex: 'local_trabajo', width: 160, ellipsis: true },
@@ -695,19 +734,23 @@ const VentilacionPage = () => {
     { title: 'Vel (m/s)', dataIndex: 'vel_aire_ms', width: 100 },
     { title: 'Caudal', dataIndex: 'caudal_m3h', width: 100 },
     { title: 'Renovaciones/h', dataIndex: 'renovaciones_h', width: 140 },
-    { title: 'Imágenes', dataIndex: 'image_urls', width: 130, render: (imgs) => {
+    {
+      title: 'Imágenes', dataIndex: 'image_urls', width: 130, render: (imgs) => {
         const list = Array.isArray(imgs) ? imgs : [];
         if (!list.length) return <Text type="secondary">Ninguna</Text>;
         return <Button type="link" icon={<EyeOutlined />} onClick={() => openImageViewer(list, 0)} size="small">Ver imagen</Button>;
-    }},
+      }
+    },
     { title: 'Ubicación', dataIndex: 'location', width: 210, render: renderLocation },
-    { title: 'Registrado por', dataIndex: 'created_by', width: 150, render: (v) => usersById[v] || v.slice(0,8) },
-    { title: 'Acciones', width: 120, fixed: 'right', render: (_, r) => (
+    { title: 'Registrado por', dataIndex: 'created_by', width: 150, render: (v) => usersById[v] || v.slice(0, 8) },
+    {
+      title: 'Acciones', width: 120, fixed: 'right', render: (_, r) => (
         <Space size="small">
           <Tooltip title="Editar"><Button shape="circle" icon={<EditOutlined />} onClick={() => handleEdit(r)} /></Tooltip>
           <Tooltip title="Eliminar"><Button danger shape="circle" icon={<DeleteOutlined />} onClick={() => handleDelete(r)} /></Tooltip>
         </Space>
-    )}
+      )
+    }
   ];
 
   const safeEquipos = Array.isArray(equiposInfo) ? equiposInfo : [];
@@ -734,24 +777,30 @@ const VentilacionPage = () => {
         <Col>
           <Space>
             <Button onClick={() => navigate(`/proyectos/${projectId}/monitoreo`)}><ArrowLeftOutlined /> Volver a Monitoreos</Button>
+
+            {/* BOTÓN DESCARGAR IMÁGENES */}
+            <Button onClick={handleDownloadAllImages}>
+              Descargar Imágenes
+            </Button>
+
             <Button icon={<FileExcelOutlined />} onClick={exportToExcel}>Exportar a Excel</Button>
-            <Button 
-               icon={<FilePdfOutlined />} 
-               onClick={handleOpenPdf}
-               style={{ backgroundColor: '#ff4d4f', color: 'white', borderColor: '#ff4d4f' }}
+            <Button
+              icon={<FilePdfOutlined />}
+              onClick={handleOpenPdf}
+              style={{ backgroundColor: '#ff4d4f', color: 'white', borderColor: '#ff4d4f' }}
             >
-               Reporte Fotos
+              Reporte Fotos
             </Button>
             <Button type="primary" icon={<PlusOutlined />} onClick={handleAdd}>Agregar Registro</Button>
           </Space>
         </Col>
       </Row>
 
-      <Row justify="space-between" style={{marginBottom: 16, gap: 15}}>
-         <Col flex="1"><Input.Search placeholder="Buscar..." value={searchText} onChange={e => setSearchText(e.target.value)} /></Col>
-         <Col>
-            <Space><Text type="secondary">Ver:</Text><Select value={pageSize} onChange={setPageSize} options={[{value:10},{value:20},{value:50}]} /></Space>
-         </Col>
+      <Row justify="space-between" style={{ marginBottom: 16, gap: 15 }}>
+        <Col flex="1"><Input.Search placeholder="Buscar..." value={searchText} onChange={e => { setSearchText(e.target.value); setCurrentPage(1); }} /></Col>
+        <Col>
+          <Space><Text type="secondary">Ver:</Text><Select value={pageSize} onChange={(val) => { setPageSize(val); setCurrentPage(1); }} options={[{ value: 10 }, { value: 20 }, { value: 50 }]} /></Space>
+        </Col>
       </Row>
 
       <Spin spinning={loadingHeader}>
@@ -769,112 +818,121 @@ const VentilacionPage = () => {
       </Spin>
 
       <Row justify="space-between" style={{ marginTop: 12 }}>
-         <Col><Text type="secondary">Registros {Math.min(currentPage * pageSize, totalFiltered)} de {totalFiltered}</Text></Col>
-         <Col><Pagination current={currentPage} pageSize={pageSize} total={totalFiltered} onChange={setCurrentPage} size="small" showSizeChanger={false} /></Col>
+        <Col><Text type="secondary">Registros {Math.min(currentPage * pageSize, totalFiltered)} de {totalFiltered}</Text></Col>
+        <Col><Pagination current={currentPage} pageSize={pageSize} total={totalFiltered} onChange={setCurrentPage} size="small" showSizeChanger={false} /></Col>
       </Row>
 
       {/* Modales */}
       <Modal open={isFormModalVisible} onOk={handleFormOk} onCancel={handleFormCancel} title={selectedRegistro ? 'Editar' : 'Agregar'} destroyOnClose width={650}>
-          <Form form={form} layout="vertical" preserve={false} key={selectedRegistro ? selectedRegistro.id : 'new'}>
-              {/* CAMPO AREA NUEVO */}
-              <Form.Item name="area" label="Área" rules={[{required:true}]}><Input /></Form.Item>
-              <Form.Item name="local_trabajo" label="Local de trabajo" rules={[{required:true}]}><Input /></Form.Item>
-              <Form.Item name="tipo_ventilacion" label="Tipo de ventilación" rules={[{ required: true }]}><Select placeholder="Selecciona tipo">{TIPOS_VENTILACION.map(t=><Option key={t} value={t}>{t}</Option>)}</Select></Form.Item>
-              <Form.Item name="temperatura_seca_c" label="Temperatura seca (°C)" rules={[{ required: true }]}><InputNumber min={-20} max={60} style={{width:'100%'}} /></Form.Item>
-              <Form.Item name="vel_aire_ms" label="Velocidad aire (m/s)" rules={[{ required: true }]}><InputNumber min={0} step={0.01} style={{width:'100%'}} /></Form.Item>
-              <Form.Item name="vel_aire_mh" label="Velocidad aire (m/h)"><InputNumber min={0} style={{width:'100%'}} /></Form.Item>
-              <Form.Item name="area_ventilacion_m2" label="Área de ventilación (m²)" rules={[{ required: true }]}><InputNumber min={0} step={0.01} style={{width:'100%'}} /></Form.Item>
-              <Form.Item name="area_alto_m" label="Área ALTO (m)"><InputNumber min={0} step={0.01} style={{width:'100%'}} /></Form.Item>
-              <Form.Item name="area_ancho_m" label="Área ANCHO (m)"><InputNumber min={0} step={0.01} style={{width:'100%'}} /></Form.Item>
-              <Form.Item name="caudal_m3h" label="Caudal (m³/h)" rules={[{ required: true }]}><InputNumber min={0} step={0.01} style={{width:'100%'}} /></Form.Item>
-              <Form.Item name="vol_largo_m" label="Aux: Largo (m)"><InputNumber min={0} step={0.01} style={{width:'100%'}} /></Form.Item>
-              <Form.Item name="vol_ancho_m" label="Aux: Ancho (m)"><InputNumber min={0} step={0.01} style={{width:'100%'}} /></Form.Item>
-              <Form.Item name="vol_alto_m" label="Aux: Altura (m)"><InputNumber min={0} step={0.01} style={{width:'100%'}} /></Form.Item>
-              <Form.Item name="volumen_m3" label="Volumen (m³)" rules={[{ required: true }]}><InputNumber min={0} step={0.01} style={{width:'100%'}} /></Form.Item>
-              <Form.Item name="renovaciones_h" label="Renovaciones/h" rules={[{ required: true }]}><InputNumber min={0} style={{width:'100%'}} /></Form.Item>
-              <Form.Item name="image_urls" label="URLs de imágenes"><Input.TextArea rows={2} /></Form.Item>
-              <Form.Item name="location" label="Ubicación (texto/JSON)"><Input /></Form.Item>
-          </Form>
+        <Form form={form} layout="vertical" preserve={false} key={selectedRegistro ? selectedRegistro.id : 'new'}
+          initialValues={selectedRegistro || {}}
+        >
+          {/* CAMPO AREA NUEVO */}
+          <Form.Item name="area" label="Área" rules={[{ required: true }]}><Input /></Form.Item>
+          <Form.Item name="local_trabajo" label="Local de trabajo" rules={[{ required: true }]}><Input /></Form.Item>
+          <Form.Item name="tipo_ventilacion" label="Tipo de ventilación" rules={[{ required: true }]}><Select placeholder="Selecciona tipo">{TIPOS_VENTILACION.map(t => <Option key={t} value={t}>{t}</Option>)}</Select></Form.Item>
+          <Form.Item name="temperatura_seca_c" label="Temperatura seca (°C)" rules={[{ required: true }]}><InputNumber min={-20} max={60} style={{ width: '100%' }} /></Form.Item>
+          <Form.Item name="vel_aire_ms" label="Velocidad aire (m/s)" rules={[{ required: true }]}><InputNumber min={0} step={0.01} style={{ width: '100%' }} /></Form.Item>
+          <Form.Item name="vel_aire_mh" label="Velocidad aire (m/h)"><InputNumber min={0} style={{ width: '100%' }} /></Form.Item>
+          <Form.Item name="area_ventilacion_m2" label="Área de ventilación (m²)" rules={[{ required: true }]}><InputNumber min={0} step={0.01} style={{ width: '100%' }} /></Form.Item>
+          <Form.Item name="area_alto_m" label="Área ALTO (m)"><InputNumber min={0} step={0.01} style={{ width: '100%' }} /></Form.Item>
+          <Form.Item name="area_ancho_m" label="Área ANCHO (m)"><InputNumber min={0} step={0.01} style={{ width: '100%' }} /></Form.Item>
+          <Form.Item name="caudal_m3h" label="Caudal (m³/h)" rules={[{ required: true }]}><InputNumber min={0} step={0.01} style={{ width: '100%' }} /></Form.Item>
+          <Form.Item name="vol_largo_m" label="Aux: Largo (m)"><InputNumber min={0} step={0.01} style={{ width: '100%' }} /></Form.Item>
+          <Form.Item name="vol_ancho_m" label="Aux: Ancho (m)"><InputNumber min={0} step={0.01} style={{ width: '100%' }} /></Form.Item>
+          <Form.Item name="vol_alto_m" label="Aux: Altura (m)"><InputNumber min={0} step={0.01} style={{ width: '100%' }} /></Form.Item>
+          <Form.Item name="volumen_m3" label="Volumen (m³)" rules={[{ required: true }]}><InputNumber min={0} step={0.01} style={{ width: '100%' }} /></Form.Item>
+          <Form.Item name="renovaciones_h" label="Renovaciones/h" rules={[{ required: true }]}><InputNumber min={0} style={{ width: '100%' }} /></Form.Item>
+          <Form.Item name="image_urls" label="URLs de imágenes"><Input.TextArea rows={2} /></Form.Item>
+          <Form.Item name="location" label="Ubicación (texto/JSON)"><Input /></Form.Item>
+        </Form>
       </Modal>
-      
+
       <Modal open={imageViewerOpen} onCancel={() => setImageViewerOpen(false)} footer={null} width={720}>
-         {imageViewerList.length > 0 && <img src={imageViewerList[imageViewerIndex]} style={{width:'100%'}} />}
+        {imageViewerList.length > 0 ? (
+          <div style={{ textAlign: 'center' }}>
+            <img src={imageViewerList[imageViewerIndex]} alt="registro" style={{ maxWidth: '100%', maxHeight: '80vh', objectFit: 'contain' }} />
+            <div style={{ marginTop: 15, fontSize: '15px' }}>
+              {imageViewerIndex + 1} / {imageViewerList.length}
+            </div>
+          </div>
+        ) : (<Text type="secondary">Sin imagen.</Text>)}
       </Modal>
 
       {/* === MODAL DE PDF === */}
       <Modal
-          title={pdfStep === 'selection' ? "Seleccionar Imágenes" : "Vista Previa PDF"}
-          open={isPdfModalVisible}
-          onCancel={() => setIsPdfModalVisible(false)}
-          width={1000}
-          style={{ top: 20 }}
-          footer={
-            pdfStep === 'selection' ? (
-                <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', alignItems: 'center' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <Text strong>Distribución:</Text>
-                        <Select defaultValue="2x4" style={{ width: 120 }} onChange={setPdfLayout}>
-                            <Option value="2x4">2 x 4</Option><Option value="2x3">2 x 3</Option>
-                            <Option value="3x3">3 x 3</Option><Option value="3x4">3 x 4</Option>
-                        </Select>
-                    </div>
-                    <Button type="primary" icon={<SaveOutlined />} onClick={handleSaveAndGenerate} loading={isSavingSelection}>
-                        Guardar y Generar PDF
-                    </Button>
-                </div>
-            ) : (
-                <Button onClick={() => setPdfStep('selection')}>
-                  <ArrowLeftOutlined /> Volver a Monitoreos
-                </Button>
-            )
-          }
+        title={pdfStep === 'selection' ? "Seleccionar Imágenes" : "Vista Previa PDF"}
+        open={isPdfModalVisible}
+        onCancel={() => setIsPdfModalVisible(false)}
+        width={1000}
+        style={{ top: 20 }}
+        footer={
+          pdfStep === 'selection' ? (
+            <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', alignItems: 'center' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Text strong>Distribución:</Text>
+                <Select defaultValue="2x4" style={{ width: 120 }} onChange={setPdfLayout}>
+                  <Option value="2x4">2 x 4</Option><Option value="2x3">2 x 3</Option>
+                  <Option value="3x3">3 x 3</Option><Option value="3x4">3 x 4</Option>
+                </Select>
+              </div>
+              <Button type="primary" icon={<SaveOutlined />} onClick={handleSaveAndGenerate} loading={isSavingSelection}>
+                Guardar y Generar PDF
+              </Button>
+            </div>
+          ) : (
+            <Button onClick={() => setPdfStep('selection')}>
+              <ArrowLeftOutlined /> Volver a Monitoreos
+            </Button>
+          )
+        }
       >
-          <div style={{ height: '75vh', overflowY: 'auto', overflowX: 'hidden' }}>
-              {pdfStep === 'selection' && (
-                  <>
-                    <div style={{ marginBottom: 16, paddingBottom: 16, borderBottom: '1px solid #f0f0f0', display: 'flex', justifyContent: 'center', gap: 16 }}>
-                        <Button size="small" onClick={handleSelectAllRecords}>Seleccionar Todos</Button>
-                        <Button size="small" onClick={handleDeselectAllRecords}>Deseleccionar Todos</Button>
+        <div style={{ height: '75vh', overflowY: 'auto', overflowX: 'hidden' }}>
+          {pdfStep === 'selection' && (
+            <>
+              <div style={{ marginBottom: 16, paddingBottom: 16, borderBottom: '1px solid #f0f0f0', display: 'flex', justifyContent: 'center', gap: 16 }}>
+                <Button size="small" onClick={handleSelectAllRecords}>Seleccionar Todos</Button>
+                <Button size="small" onClick={handleDeselectAllRecords}>Deseleccionar Todos</Button>
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', justifyContent: 'center' }}>
+                {registros.filter(r => getImagesArray(r).length > 0).map((r) => {
+                  const imgs = getImagesArray(r);
+                  const currentIdx = tempSelections[r.id] || 0;
+                  const isSelected = recordSelections[r.id] === true;
+                  return (
+                    <div key={r.id} style={{
+                      width: '23%',
+                      border: isSelected ? '1px solid #ddd' : '1px dashed #999',
+                      opacity: isSelected ? 1 : 0.5,
+                      padding: '8px', borderRadius: '8px', display: 'flex', flexDirection: 'column', alignItems: 'center', backgroundColor: '#fafafa', position: 'relative'
+                    }}>
+                      <Checkbox checked={isSelected} onChange={() => handleRecordSelectionToggle(r.id)} style={{ position: 'absolute', top: 5, right: 5, zIndex: 20 }} />
+                      <Text strong style={{ fontSize: 12 }}>{monitoreoInfo?.tipo_monitoreo}</Text>
+                      <div style={{ position: 'relative', width: '100%', height: '150px', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff', border: '1px solid #eee', marginTop: 5 }}>
+                        {imgs.length > 1 && <Button shape="circle" icon={<LeftOutlined />} size="small" style={{ position: 'absolute', left: 5 }} onClick={() => handlePrevImage(r.id, imgs.length)} />}
+                        <img src={imgs[currentIdx]} alt="preview" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
+                        {imgs.length > 1 && <Button shape="circle" icon={<RightOutlined />} size="small" style={{ position: 'absolute', right: 5 }} onClick={() => handleNextImage(r.id, imgs.length)} />}
+                        {imgs.length > 1 && <span style={{ position: 'absolute', bottom: 2, right: 5, fontSize: 10, background: 'rgba(255,255,255,0.7)' }}>{currentIdx + 1}/{imgs.length}</span>}
+                      </div>
+                      <Text style={{ fontSize: 11, marginTop: 5 }}>{r.local_trabajo}</Text>
                     </div>
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', justifyContent: 'center' }}>
-                      {registros.filter(r => getImagesArray(r).length > 0).map((r) => {
-                          const imgs = getImagesArray(r);
-                          const currentIdx = tempSelections[r.id] || 0;
-                          const isSelected = recordSelections[r.id] === true;
-                          return (
-                              <div key={r.id} style={{ 
-                                  width: '23%', 
-                                  border: isSelected ? '1px solid #ddd' : '1px dashed #999', 
-                                  opacity: isSelected ? 1 : 0.5,
-                                  padding: '8px', borderRadius: '8px', display: 'flex', flexDirection: 'column', alignItems: 'center', backgroundColor: '#fafafa', position: 'relative'
-                              }}>
-                                  <Checkbox checked={isSelected} onChange={() => handleRecordSelectionToggle(r.id)} style={{ position: 'absolute', top: 5, right: 5, zIndex: 20 }} />
-                                  <Text strong style={{ fontSize: 12 }}>{monitoreoInfo?.tipo_monitoreo}</Text>
-                                  <div style={{ position: 'relative', width: '100%', height: '150px', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff', border: '1px solid #eee', marginTop: 5 }}>
-                                      {imgs.length > 1 && <Button shape="circle" icon={<LeftOutlined />} size="small" style={{ position: 'absolute', left: 5 }} onClick={() => handlePrevImage(r.id, imgs.length)} />}
-                                      <img src={imgs[currentIdx]} style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
-                                      {imgs.length > 1 && <Button shape="circle" icon={<RightOutlined />} size="small" style={{ position: 'absolute', right: 5 }} onClick={() => handleNextImage(r.id, imgs.length)} />}
-                                      {imgs.length > 1 && <span style={{ position: 'absolute', bottom: 2, right: 5, fontSize: 10, background: 'rgba(255,255,255,0.7)' }}>{currentIdx + 1}/{imgs.length}</span>}
-                                  </div>
-                                  <Text style={{ fontSize: 11, marginTop: 5 }}>{r.local_trabajo}</Text>
-                              </div>
-                          );
-                      })}
-                    </div>
-                  </>
-              )}
-              {pdfStep === 'view' && (
-                  <PDFViewer width="100%" height="100%" showToolbar={true}>
-                      <ReporteFotografico 
-                          data={pdfData} 
-                          empresa={proyectoInfo?.descripcion || 'SIN DESC'} 
-                          layout={pdfLayout}
-                          tituloMonitoreo={monitoreoInfo?.tipo_monitoreo || 'Ventilación'} 
-                          descripcionProyecto={''}
-                      />
-                  </PDFViewer>
-              )}
-          </div>
+                  );
+                })}
+              </div>
+            </>
+          )}
+          {pdfStep === 'view' && (
+            <PDFViewer width="100%" height="100%" showToolbar={true}>
+              <ReporteFotografico
+                data={pdfData}
+                empresa={proyectoInfo?.descripcion || 'SIN DESC'}
+                layout={pdfLayout}
+                tituloMonitoreo={monitoreoInfo?.tipo_monitoreo || 'Ventilación'}
+                descripcionProyecto={''}
+              />
+            </PDFViewer>
+          )}
+        </div>
       </Modal>
     </>
   );

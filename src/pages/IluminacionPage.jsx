@@ -23,7 +23,7 @@ import {
   Descriptions,
   Pagination,
   Checkbox, // <-- NUEVO
-  Divider   // <-- NUEVO
+  Divider // <-- NUEVO
 } from 'antd';
 import {
   PlusOutlined,
@@ -39,9 +39,9 @@ import {
   DeleteOutlined as DeleteIcon,
   FileExcelOutlined,
   FilePdfOutlined, // <-- NUEVO
-  SaveOutlined,    // <-- NUEVO
-  LeftOutlined,    // <-- NUEVO
-  RightOutlined    // <-- NUEVO
+  SaveOutlined, // <-- NUEVO
+  LeftOutlined, // <-- NUEVO
+  RightOutlined // <-- NUEVO
 } from '@ant-design/icons';
 
 import { useParams, Link, useNavigate } from 'react-router-dom';
@@ -50,8 +50,11 @@ import dayjs from 'dayjs';
 import 'dayjs/locale/es';
 import utc from 'dayjs/plugin/utc';
 import timezone from 'dayjs/plugin/timezone';
-import * as XLSX from 'xlsx';          // (tu versión nueva de Excel)
+import * as XLSX from 'xlsx'; // (tu versión nueva de Excel)
 
+// ► NUEVO: librerías para descargar todas las imágenes en ZIP
+import JSZip from 'jszip';
+import { saveAs } from 'file-saver';
 
 // IMPORTS DEL REPORTE FOTOGRÁFICO
 import { PDFViewer } from '@react-pdf/renderer';
@@ -75,8 +78,8 @@ const calculateAverage = (lecturas) => {
 };
 
 /* =========================================================
-   Helpers
-   ========================================================= */
+   Helpers
+   ========================================================= */
 
 const formatHoraUTC = (v) => {
   if (!v) return '';
@@ -113,11 +116,84 @@ const getImagesArray = (reg) => {
       if (Array.isArray(parsed)) return parsed;
       return [reg.image_urls];
     } catch {
-      return reg.image_urls.split(',').map(s => s.trim());
+      return reg.image_urls.split(',').map(s => s.trim()).filter(Boolean); // Agregado filter(Boolean)
     }
   }
   return [];
 };
+
+
+/* ========================= DESCARGAR TODAS LAS IMÁGENES EN ZIP (NUEVO) ========================= */
+const downloadAllImages = async (mediciones, proyectoInfo) => {
+  try {
+    // 1. Recolectar todas las URLs únicas de todas las mediciones
+    const allUrls = [];
+    mediciones.forEach((r) => {
+      const imgs = getImagesArray(r);
+      imgs.forEach((u) => allUrls.push(u));
+    });
+
+    if (!allUrls.length) {
+      message.warning('No hay imágenes registradas en este monitoreo.');
+      return;
+    }
+
+    message.loading({
+      content: 'Preparando descarga de imágenes...',
+      key: 'zipIluminacion',
+      duration: 0
+    });
+
+    const uniqueUrls = Array.from(new Set(allUrls.filter(Boolean)));
+    const zip = new JSZip();
+    const folder = zip.folder('iluminacion');
+
+    // 2. Descargar y agregar al ZIP
+    const downloadPromises = uniqueUrls.map(async (url, index) => {
+      try {
+        const resp = await fetch(url);
+        if (!resp.ok) {
+          console.warn('No se pudo descargar', url);
+          return;
+        }
+        const blob = await resp.blob();
+        let fileName = url.split('/').pop() || `imagen_${index + 1}.jpg`;
+        // Quitar parámetros de consulta
+        fileName = fileName.split('?')[0]; 
+        folder.file(fileName, blob);
+      } catch (err) {
+        console.error('Error descargando', url, err);
+      }
+    });
+
+    await Promise.all(downloadPromises);
+
+    // 3. Generar y guardar el archivo ZIP
+    const content = await zip.generateAsync({ type: 'blob' });
+
+    // Generar nombre de archivo
+    const empresaSafe = (proyectoInfo?.nombre || 'empresa')
+      .replace(/[^\w\-]+/g, '_')
+      .substring(0, 40);
+    const fechaSafe = (proyectoInfo?.created_at ? formatFechaUTC(proyectoInfo.created_at) : '')
+      .replace(/[^\d]/g, '');
+    const zipName = `iluminacion_imagenes_${empresaSafe}_${fechaSafe || 'monitoreo'}.zip`;
+
+    saveAs(content, zipName);
+
+    message.success({
+      content: 'Descarga lista.',
+      key: 'zipIluminacion'
+    });
+  } catch (err) {
+    console.error(err);
+    message.error({
+      content: 'No se pudieron descargar las imágenes.',
+      key: 'zipIluminacion'
+    });
+  }
+};
+/* ================================================================================================= */
 
 const IluminacionPage = () => {
   const { projectId, monitoreoId: mId, id } = useParams();
@@ -151,7 +227,7 @@ const IluminacionPage = () => {
   const [pdfLayout, setPdfLayout] = useState('2x4');
 
   // aviso realtime
-  const [lastRtMsg, setLastRtMsg] = useState('');
+  // const [lastRtMsg, setLastRtMsg] = useState(''); // No usado, se comenta
 
   // búsqueda + paginación
   const [searchText, setSearchText] = useState('');
@@ -237,11 +313,9 @@ const IluminacionPage = () => {
 
       const mapped = (data || []).map((r) => {
         const lecturas = Array.isArray(r.mediciones_lux) ? r.mediciones_lux : (r.mediciones_lux?.values ? r.mediciones_lux.values : []);
-        let imageUrls = [];
-        if (Array.isArray(r.image_urls)) imageUrls = r.image_urls;
-        else if (typeof r.image_urls === 'string' && r.image_urls.trim() !== '') {
-          imageUrls = r.image_urls.split(',').map((s) => s.trim());
-        }
+        
+        // Usamos el helper getImagesArray
+        let imageUrls = getImagesArray(r);
 
         let location = r.location;
         if (typeof r.location === 'string') { try { location = JSON.parse(r.location); } catch { } }
@@ -321,6 +395,7 @@ const IluminacionPage = () => {
         const originalUrl = imgs[finalIdx];
         const codigo = `ILU-${String(i + 1).padStart(2, '0')}`;
 
+        // NOTA: Se mantiene la lógica de usar la URL original para PDF, asumiendo que el componente ReporteFotografico manejará la optimización si es necesario.
         dataForPdf.push({
           imageUrl: originalUrl,
           area: r.area || 'N/A',
@@ -616,7 +691,7 @@ const IluminacionPage = () => {
     },
     {
       title: 'Imágenes', dataIndex: 'image_urls', width: 120, render: (imgs) => {
-        const list = Array.isArray(imgs) ? imgs : [];
+        const list = getImagesArray({ image_urls: imgs });
         if (!list.length) return <Text type="secondary">Ninguna</Text>;
         return <Button type="link" icon={<EyeOutlined />} onClick={() => openImageViewer(list, 0)} size="small">Ver imagen</Button>;
       }
@@ -656,6 +731,12 @@ const IluminacionPage = () => {
         <Col>
           <Space>
             <Button onClick={() => navigate(`/proyectos/${projectId}/monitoreo`)}><ArrowLeftOutlined /> Volver a Monitoreos</Button>
+            
+            {/* NUEVO: Botón de descarga de imágenes */}
+            <Button onClick={() => downloadAllImages(mediciones, proyectoInfo)}>
+              Descargar Imágenes
+            </Button>
+
             <Button icon={<FileExcelOutlined />} onClick={exportToExcel}>Exportar a Excel</Button>
             <Button icon={<FilePdfOutlined />} onClick={handleOpenPdf} style={{ backgroundColor: '#ff4d4f', color: 'white', borderColor: '#ff4d4f' }}>Reporte Fotos</Button>
             <Button type="primary" icon={<PlusOutlined />} onClick={handleAdd}>Agregar Medición</Button>
@@ -709,7 +790,7 @@ const IluminacionPage = () => {
               lecturas: Array.isArray(selectedMedicion.lecturas) && selectedMedicion.lecturas.length > 0 ? selectedMedicion.lecturas : [undefined],
               k_index: selectedMedicion.k_index || '', k_params: selectedMedicion.k_params || '',
               observaciones: selectedMedicion.observaciones || '',
-              image_urls: Array.isArray(selectedMedicion.image_urls) ? selectedMedicion.image_urls.join(', ') : (selectedMedicion.image_urls || ''),
+              image_urls: getImagesArray(selectedMedicion).join(', '),
               location: typeof selectedMedicion.location === 'object' ? JSON.stringify(selectedMedicion.location) : (selectedMedicion.location || ''),
             };
           })() : { lecturas: [undefined] }
@@ -719,7 +800,7 @@ const IluminacionPage = () => {
           <Form.Item name="puesto_trabajo" label="Puesto de Trabajo" rules={[{ required: true }]}><Input /></Form.Item>
           <Form.Item name="punto_medicion" label="Punto de Medición" rules={[{ required: true }]}><Input placeholder="Ej: P1" /></Form.Item>
           <Form.Item name="descripcion" label="Descripción (Opcional)"><Input.TextArea rows={2} /></Form.Item>
-          <Form.Item name="horario_medicion" label="Horario de Medición" rules={[{ required: true }]}><Space.Compact style={{ width: '100%' }}><TimePicker format="HH:mm" style={{ flex: 1 }} /><Tooltip title="Usar hora actual"><Button icon={<ClockCircleOutlined />} onClick={() => form.setFieldsValue({ horario_medicion: dayjs() })} /></Tooltip></Space.Compact></Form.Item>
+          <Form.Item name="horario_medicion" label="Horario de Medición" rules={[{ required: true }]}><Space.Compact style={{ width: '100%' }}><TimePicker format="HH:mm" style={{ flex: 1 }} /><Tooltip title="Usar hora actual"><Button icon={<ClockCircleOutlined />} onClick={setHoraActual} /></Tooltip></Space.Compact></Form.Item>
           <Form.Item name="tipo_iluminacion" label="Tipo de Iluminación" rules={[{ required: true }]}><Select placeholder="Selecciona un tipo">{TIPOS_ILUMINACION.map((t) => (<Option key={t} value={t}>{t}</Option>))}</Select></Form.Item>
           <Form.Item name="nivel_requerido" label="Nivel Requerido (LUX)" rules={[{ required: true }]}><InputNumber min={0} style={{ width: '100%' }} /></Form.Item>
           <Form.List name="lecturas" rules={[{ validator: async (_, lecturas) => { if (!lecturas || lecturas.filter((l) => l != null).length === 0) return Promise.reject(new Error('Agrega al menos una lectura')); } }]}>
@@ -742,8 +823,37 @@ const IluminacionPage = () => {
         </Form>
       </Modal>
 
-      <Modal open={imageViewerOpen} onCancel={() => setImageViewerOpen(false)} footer={null} width={720}>
-        {imageViewerList.length ? (<div style={{ textAlign: 'center' }}><img src={imageViewerList[imageViewerIndex]} style={{ maxWidth: '100%', maxHeight: '60vh', objectFit: 'contain' }} /><div style={{ marginTop: 8 }}>{imageViewerIndex + 1} / {imageViewerList.length}</div></div>) : (<Text type="secondary">Sin imagen.</Text>)}
+      <Modal open={imageViewerOpen} 
+             onCancel={() => setImageViewerOpen(false)} 
+             footer={
+                       imageViewerList.length > 1
+                         ? [
+                             <Button
+                               key="prev"
+                               onClick={() =>
+                                 setImageViewerIndex((prev) => (prev - 1 + imageViewerList.length) % imageViewerList.length)
+                               }
+                             >
+                               Anterior
+                             </Button>,
+                             <Button
+                               key="next"
+                               type="primary"
+                               onClick={() =>
+                                 setImageViewerIndex((prev) => (prev + 1) % imageViewerList.length)
+                               }
+                             >
+                               Siguiente
+                             </Button>,
+                           ]
+                         : null
+                     } 
+             width={720}
+             title="Imagen del registro">
+              
+        {imageViewerList.length ? (<div style={{ textAlign: 'center' }}>
+          <img src={imageViewerList[imageViewerIndex]} 
+               style={{ maxWidth: '100%', maxHeight: '60vh', objectFit: 'contain' }} /><div style={{ marginTop: 8 }}>{imageViewerIndex + 1} / {imageViewerList.length}</div></div>) : (<Text type="secondary">Sin imagen.</Text>)}
       </Modal>
 
       {/* === MODAL DE PDF === */}

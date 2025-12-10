@@ -23,8 +23,8 @@ import {
     Descriptions,
     Pagination,
     Switch,
-    Checkbox, // <-- NUEVO
-    Divider   // <-- NUEVO
+    Checkbox,
+    Divider
 } from 'antd';
 import {
     PlusOutlined,
@@ -39,10 +39,10 @@ import {
     EyeOutlined,
     DeleteOutlined as DeleteIcon,
     FileExcelOutlined,
-    FilePdfOutlined, // <-- NUEVO
-    SaveOutlined,    // <-- NUEVO
-    LeftOutlined,    // <-- NUEVO
-    RightOutlined    // <-- NUEVO
+    FilePdfOutlined,
+    SaveOutlined,
+    LeftOutlined,
+    RightOutlined
 } from '@ant-design/icons';
 
 import { useParams, Link, useNavigate } from 'react-router-dom';
@@ -51,8 +51,10 @@ import dayjs from 'dayjs';
 import 'dayjs/locale/es';
 import utc from 'dayjs/plugin/utc';
 import timezone from 'dayjs/plugin/timezone';
-//import XLSX from 'xlsx-js-style';
-import * as XLSX from 'xlsx';          // (tu versión nueva de Excel)
+import * as XLSX from 'xlsx';
+
+// IMPORTAR LA FUNCIÓN CENTRALIZADA
+import { downloadImagesAsZip } from '../utils/downloadImagesAsZip.js';
 
 // IMPORTS DEL REPORTE FOTOGRÁFICO
 import { PDFViewer } from '@react-pdf/renderer';
@@ -71,8 +73,8 @@ const PONDERACION_OPTIONS = ['A', 'C', 'Z'];
 const RESPUESTA_OPTIONS = ['Rápido', 'Lento', 'Impulso'];
 
 /* =========================================================
-   Helpers para hora actual en UTC
-   ========================================================= */
+   Helpers para hora actual en UTC
+   ========================================================= */
 
 const formatHoraUTC = (v) => {
     if (!v) return '';
@@ -151,7 +153,7 @@ const getImagesArray = (reg) => {
             if (Array.isArray(parsed)) return parsed;
             return [reg.image_urls];
         } catch {
-            return reg.image_urls.split(',').map(s => s.trim());
+            return reg.image_urls.split(',').map(s => s.trim()).filter(Boolean); // Se asegura de filtrar vacíos
         }
     }
     return [];
@@ -194,6 +196,52 @@ const DosimetriaPage = () => {
     const [pageSize, setPageSize] = useState(10);
     const [currentPage, setCurrentPage] = useState(1);
     const [usersById, setUsersById] = useState({});
+
+    /* ========================= DESCARGA DE IMÁGENES (REFACTORIZADO) ========================= */
+    const handleDownloadAllImages = async () => {
+        try {
+            // 1. Recolectar TODAS las URLs planas de todos los registros
+            const allUrls = mediciones.flatMap(r => getImagesArray(r));
+            
+            if (allUrls.length === 0) {
+                message.warning('No hay imágenes registradas en este monitoreo.');
+                return;
+            }
+
+            // 2. Construir el nombre del archivo ZIP
+            const empresaSafe = (proyectoInfo?.nombre || 'empresa')
+                .replace(/[^\w\-]+/g, '_')
+                .substring(0, 40);
+            const fechaSafe = (proyectoInfo?.created_at ? formatFechaUTC(proyectoInfo.created_at) : '')
+                .replace(/[^\d]/g, '');
+            const zipName = `dosimetria_imagenes_${empresaSafe}_${fechaSafe || 'monitoreo'}.zip`;
+            
+            message.loading({
+                content: 'Preparando descarga de imágenes...',
+                key: 'zipDosimetria',
+                duration: 0
+            });
+
+            // 3. Llamar a la función centralizada
+            await downloadImagesAsZip(allUrls, { zipName, folderName: 'dosimetria' });
+
+            message.success({
+                content: 'Descarga lista.',
+                key: 'zipDosimetria'
+            });
+
+        } catch (err) {
+            // El error 'No hay imágenes...' se maneja dentro de downloadImagesAsZip
+            if (err.message !== 'No hay imágenes para descargar') {
+                console.error(err);
+                message.error({
+                    content: 'No se pudieron descargar las imágenes.',
+                    key: 'zipDosimetria'
+                });
+            }
+        }
+    };
+    /* ======================================================================================= */
 
     /* ================ LÓGICA PDF Y SELECCIÓN ================ */
 
@@ -377,14 +425,13 @@ const DosimetriaPage = () => {
 
             const mapped = (data || []).map((r) => {
                 const arr = parseFlexibleArray(r.mediciones_db);
-                let imageUrls = [];
-                if (Array.isArray(r.image_urls)) imageUrls = r.image_urls;
-                else if (typeof r.image_urls === 'string' && r.image_urls.trim() !== '') {
-                    imageUrls = r.image_urls.split(',').map((s) => s.trim());
-                }
+                // Usamos el helper getImagesArray
+                let imageUrls = getImagesArray(r); 
+                
                 return {
                     ...r,
                     lecturas_db: arr,
+                    image_urls: imageUrls,
                     fecha_medicion: formatFechaExactaUTC(r.measured_at),
                     hora_medicion: formatHoraExactaUTC(r.measured_at),
                 };
@@ -705,7 +752,7 @@ const DosimetriaPage = () => {
         },
         { title: 'Uso Protectores', dataIndex: 'uso_protectores', key: 'uso_protectores', width: 130, render: (v) => (v ? <Tag color="green">Sí</Tag> : <Tag color="red">No</Tag>) },
         { title: 'Tipo de Protector', dataIndex: 'tipo_protector', key: 'tipo_protector', width: 200, ellipsis: true },
-        { title: 'Imágenes', dataIndex: 'image_urls', key: 'image_urls', width: 120, render: (imgs) => { const list = Array.isArray(imgs) ? imgs : []; if (!list.length) return <Text type="secondary">Ninguna</Text>; return <Button type="link" icon={<EyeOutlined />} onClick={() => openImageViewer(list, 0)} size="small">Ver imagen</Button>; } },
+        { title: 'Imágenes', dataIndex: 'image_urls', key: 'image_urls', width: 120, render: (imgs) => { const list = getImagesArray({ image_urls: imgs }); if (!list.length) return <Text type="secondary">Ninguna</Text>; return <Button type="link" icon={<EyeOutlined />} onClick={() => openImageViewer(list, 0)} size="small">Ver imagen</Button>; } },
         { title: 'Ubicación', dataIndex: 'location', key: 'location', width: 200, render: (v) => renderLocation(v) },
         { title: 'Observaciones', dataIndex: 'observaciones', key: 'observaciones', ellipsis: true, width: 220 },
         { title: 'Registrado por', dataIndex: 'created_by', key: 'created_by', width: 190, fixed: 'right', render: (v) => { if (!v) return <Text type="secondary">N/A</Text>; const display = usersById[v]; return display ? <Text>{display}</Text> : <Text type="secondary">{v}</Text>; } },
@@ -734,6 +781,12 @@ const DosimetriaPage = () => {
                 <Col>
                     <Space>
                         <Button onClick={() => navigate(`/proyectos/${projectId}/monitoreo`)}><ArrowLeftOutlined /> Volver a Monitoreos</Button>
+                        
+                        {/* BOTÓN REFACTORIZADO: Usa la función centralizada */}
+                        <Button onClick={handleDownloadAllImages}>
+                            Descargar Imágenes
+                        </Button>
+                        
                         <Button icon={<FileExcelOutlined />} onClick={exportToExcel}>Exportar a Excel</Button>
                         <Button icon={<FilePdfOutlined />} onClick={handleOpenPdf} style={{ backgroundColor: '#ff4d4f', color: 'white', borderColor: '#ff4d4f' }}>Reporte Fotos</Button>
                         <Button type="primary" icon={<PlusOutlined />} onClick={handleAdd}>Agregar Medición</Button>
@@ -797,7 +850,7 @@ const DosimetriaPage = () => {
                             plx_db: selectedMedicion.plx_db,
                             lex_db: selectedMedicion.lex_db,
                             le_db: selectedMedicion.le_db,
-                            image_urls: Array.isArray(selectedMedicion.image_urls) ? selectedMedicion.image_urls.join(', ') : selectedMedicion.image_urls || '',
+                            image_urls: getImagesArray(selectedMedicion).join(', '),
                             location: typeof selectedMedicion.location === 'object' ? JSON.stringify(selectedMedicion.location) : (selectedMedicion.location || ''),
                         };
                     })() : { lecturas_db: [undefined], uso_protectores: false, ponderacion: 'A', respuesta: 'Rápido' }
@@ -818,7 +871,7 @@ const DosimetriaPage = () => {
                     </Row>
                     <Row gutter={12}>
                         <Col span={8}><Form.Item name="duracion_medicion_h" label="Duración Med. (h)"><InputNumber min={0} step={0.1} style={{ width: '100%' }} /></Form.Item></Col>
-                        <Col span={8}><Form.Item name="horario_medicion" label="Hora de medición" rules={[{ required: true }]}><Space.Compact style={{ width: '100%' }}><TimePicker format="HH:mm" style={{ flex: 1 }} /><Tooltip title="Usar hora actual"><Button icon={<ClockCircleOutlined />} onClick={() => form.setFieldsValue({ horario_medicion: dayjs() })} /></Tooltip></Space.Compact></Form.Item></Col>
+                        <Col span={8}><Form.Item name="horario_medicion" label="Hora de medición" rules={[{ required: true }]}><Space.Compact style={{ width: '100%' }}><TimePicker format="HH:mm" style={{ flex: 1 }} /><Tooltip title="Usar hora actual"><Button icon={<ClockCircleOutlined />} onClick={setHoraActual} /></Tooltip></Space.Compact></Form.Item></Col>
                     </Row>
                     <Divider orientation="left">Resultados (dB)</Divider>
                     <Row gutter={16}>

@@ -49,6 +49,10 @@ import * as XLSX from 'xlsx';         // (tu versión nueva de Excel)
 import { PDFViewer } from '@react-pdf/renderer';
 import { ReporteFotografico } from '../components/ReporteFotografico';
 
+// arriba, junto con otros imports
+import { downloadImagesAsZip } from '../utils/downloadImagesAsZip';
+
+
 dayjs.extend(utc);
 dayjs.locale('es');
 
@@ -188,9 +192,8 @@ const ParticulasPage = () => {
       }
       if (val.lat || val.latitude) {
         return (
-          <span>{`Lat: ${val.lat || val.latitude}, Lng: ${
-            val.lng || val.longitude
-          }`}</span>
+          <span>{`Lat: ${val.lat || val.latitude}, Lng: ${val.lng || val.longitude
+            }`}</span>
         );
       }
     }
@@ -210,6 +213,38 @@ const ParticulasPage = () => {
     }
     return [];
   };
+
+  /* PARA DESCARGAR IMAGENES */
+
+  const downloadAllImages = async () => {
+    try {
+      // Juntar TODAS las urls de image_urls de los registros visibles (o de todos)
+      const allUrls = [];
+
+      registros.forEach((reg) => {
+        const imgs = getImagesArray(reg);
+        imgs.forEach((u) => allUrls.push(u));
+      });
+
+      if (!allUrls.length) {
+        message.warning('No hay imágenes registradas en este monitoreo.');
+        return;
+      }
+
+      message.loading({ content: 'Preparando descarga de imágenes...', key: 'zipImgs', duration: 0 });
+
+      await downloadImagesAsZip(allUrls, {
+        zipName: `particulas_imagenes_${projectId || ''}_${monitoreoId || ''}.zip`,
+        folderName: 'particulas'
+      });
+
+      message.success({ content: 'Descarga lista.', key: 'zipImgs' });
+    } catch (err) {
+      console.error(err);
+      message.error({ content: 'No se pudieron descargar las imágenes.', key: 'zipImgs' });
+    }
+  };
+  /* ================ REPORTE FOTOGRÁFICO ================ */
 
   const handlePrevImage = (regId, total) => {
     setTempSelections((prev) => ({
@@ -586,9 +621,9 @@ const ParticulasPage = () => {
         image_urls:
           values.image_urls && values.image_urls.trim() !== ''
             ? values.image_urls
-                .split(',')
-                .map((s) => s.trim())
-                .filter(Boolean)
+              .split(',')
+              .map((s) => s.trim())
+              .filter(Boolean)
             : null,
         location: values.location || null
       };
@@ -640,9 +675,9 @@ const ParticulasPage = () => {
         image_urls:
           values.image_urls && values.image_urls.trim() !== ''
             ? values.image_urls
-                .split(',')
-                .map((s) => s.trim())
-                .filter(Boolean)
+              .split(',')
+              .map((s) => s.trim())
+              .filter(Boolean)
             : null,
         location: values.location || null
       };
@@ -703,8 +738,8 @@ const ParticulasPage = () => {
       const fechaInicio = firstReg?.measured_at
         ? dayjs(firstReg.measured_at).utc().format('DD/MM/YYYY')
         : proyectoInfo?.measured_at
-        ? dayjs(proyectoInfo.measured_at).utc().format('DD/MM/YYYY')
-        : '';
+          ? dayjs(proyectoInfo.measured_at).utc().format('DD/MM/YYYY')
+          : '';
       const fechaFin = '';
 
       wsData.push([
@@ -1050,8 +1085,8 @@ const ParticulasPage = () => {
   const headerFechaInicio = firstRegistro?.measured_at
     ? dayjs(firstRegistro.measured_at).utc().format('DD/MM/YYYY')
     : proyectoInfo?.created_at
-    ? dayjs(proyectoInfo.created_at).utc().format('DD/MM/YYYY')
-    : 'N/A';
+      ? dayjs(proyectoInfo.created_at).utc().format('DD/MM/YYYY')
+      : 'N/A';
   const headerFechaFin = '';
   const safeEquipos = Array.isArray(equiposInfo) ? equiposInfo : [];
   const headerEquipos =
@@ -1090,49 +1125,39 @@ const ParticulasPage = () => {
 
       <Row justify="space-between" align="middle" style={{ marginBottom: 16 }}>
         <Col>
-          <Title
-            level={2}
-            style={{ color: PRIMARY_BLUE, marginBottom: 0 }}
-          >
+          <Title level={2} style={{ color: PRIMARY_BLUE, marginBottom: 0 }}>
             Monitoreo de Partículas
           </Title>
         </Col>
         <Col>
           <Space>
-            <Button
-              onClick={() =>
-                navigate(`/proyectos/${projectId}/monitoreo`)
-              }
-            >
+            <Button onClick={() => navigate(`/proyectos/${projectId}/monitoreo`)}>
               <ArrowLeftOutlined /> Volver a Monitoreos
             </Button>
-            <Button
-              icon={<FileExcelOutlined />}
-              onClick={exportToExcel}
-            >
+
+            <Button onClick={downloadAllImages}>
+              Descargar Imágenes
+            </Button>
+
+            <Button icon={<FileExcelOutlined />} onClick={exportToExcel}>
               Exportar a Excel
             </Button>
+
             <Button
               icon={<FilePdfOutlined />}
               onClick={handleOpenPdf}
-              style={{
-                backgroundColor: '#ff4d4f',
-                color: 'white',
-                borderColor: '#ff4d4f'
-              }}
+              style={{ backgroundColor: '#ff4d4f', color: 'white', borderColor: '#ff4d4f' }}
             >
               Reporte Fotos
             </Button>
-            <Button
-              type="primary"
-              icon={<PlusOutlined />}
-              onClick={handleAdd}
-            >
+
+            <Button type="primary" icon={<PlusOutlined />} onClick={handleAdd}>
               Agregar
             </Button>
           </Space>
         </Col>
       </Row>
+
 
       <Row
         justify="space-between"
@@ -1278,37 +1303,37 @@ const ParticulasPage = () => {
           initialValues={
             selectedRegistro
               ? {
-                  measured_at: selectedRegistro.measured_at
-                    ? dayjs(selectedRegistro.measured_at)
-                        .utc()
-                        .format('YYYY-MM-DD HH:mm')
-                    : '',
-                  area: selectedRegistro.area || '', // CAMPO AREA
-                  puesto_trabajo: selectedRegistro.puesto_trabajo,
-                  temperatura_c: selectedRegistro.temperatura_c
-                    ? Number(selectedRegistro.temperatura_c)
-                    : undefined,
-                  hr_percent: selectedRegistro.hr_percent
-                    ? Number(selectedRegistro.hr_percent)
-                    : undefined,
-                  pm25_values: Array.isArray(selectedRegistro.pm25_values)
-                    ? selectedRegistro.pm25_values.join(', ')
-                    : '',
-                  pm25_prom: selectedRegistro.pm25_prom,
-                  pm10_values: Array.isArray(selectedRegistro.pm10_values)
-                    ? selectedRegistro.pm10_values.join(', ')
-                    : '',
-                  pm10_prom: selectedRegistro.pm10_prom,
-                  pts_values: Array.isArray(selectedRegistro.pts_values)
-                    ? selectedRegistro.pts_values.join(', ')
-                    : '',
-                  pts_prom: selectedRegistro.pts_prom,
-                  observaciones: selectedRegistro.observaciones,
-                  image_urls: Array.isArray(selectedRegistro.image_urls)
-                    ? selectedRegistro.image_urls.join(', ')
-                    : selectedRegistro.image_urls || '',
-                  location: selectedRegistro.location || ''
-                }
+                measured_at: selectedRegistro.measured_at
+                  ? dayjs(selectedRegistro.measured_at)
+                    .utc()
+                    .format('YYYY-MM-DD HH:mm')
+                  : '',
+                area: selectedRegistro.area || '', // CAMPO AREA
+                puesto_trabajo: selectedRegistro.puesto_trabajo,
+                temperatura_c: selectedRegistro.temperatura_c
+                  ? Number(selectedRegistro.temperatura_c)
+                  : undefined,
+                hr_percent: selectedRegistro.hr_percent
+                  ? Number(selectedRegistro.hr_percent)
+                  : undefined,
+                pm25_values: Array.isArray(selectedRegistro.pm25_values)
+                  ? selectedRegistro.pm25_values.join(', ')
+                  : '',
+                pm25_prom: selectedRegistro.pm25_prom,
+                pm10_values: Array.isArray(selectedRegistro.pm10_values)
+                  ? selectedRegistro.pm10_values.join(', ')
+                  : '',
+                pm10_prom: selectedRegistro.pm10_prom,
+                pts_values: Array.isArray(selectedRegistro.pts_values)
+                  ? selectedRegistro.pts_values.join(', ')
+                  : '',
+                pts_prom: selectedRegistro.pts_prom,
+                observaciones: selectedRegistro.observaciones,
+                image_urls: Array.isArray(selectedRegistro.image_urls)
+                  ? selectedRegistro.image_urls.join(', ')
+                  : selectedRegistro.image_urls || '',
+                location: selectedRegistro.location || ''
+              }
               : { measured_at: dayjs().utc().format('YYYY-MM-DD HH:mm') }
           }
         >
@@ -1436,30 +1461,30 @@ const ParticulasPage = () => {
         footer={
           imageViewerList.length > 1
             ? [
-                <Button
-                  key="prev"
-                  onClick={() =>
-                    setImageViewerIndex(
-                      (prev) =>
-                        (prev - 1 + imageViewerList.length) %
-                        imageViewerList.length
-                    )
-                  }
-                >
-                  Anterior
-                </Button>,
-                <Button
-                  key="next"
-                  type="primary"
-                  onClick={() =>
-                    setImageViewerIndex(
-                      (prev) => (prev + 1) % imageViewerList.length
-                    )
-                  }
-                >
-                  Siguiente
-                </Button>
-              ]
+              <Button
+                key="prev"
+                onClick={() =>
+                  setImageViewerIndex(
+                    (prev) =>
+                      (prev - 1 + imageViewerList.length) %
+                      imageViewerList.length
+                  )
+                }
+              >
+                Anterior
+              </Button>,
+              <Button
+                key="next"
+                type="primary"
+                onClick={() =>
+                  setImageViewerIndex(
+                    (prev) => (prev + 1) % imageViewerList.length
+                  )
+                }
+              >
+                Siguiente
+              </Button>
+            ]
             : null
         }
         width={720}

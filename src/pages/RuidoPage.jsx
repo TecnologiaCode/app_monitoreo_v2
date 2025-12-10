@@ -23,8 +23,8 @@ import {
   Descriptions,
   Pagination,
   Switch,
-  Checkbox, // <-- NUEVO
-  Divider   // <-- NUEVO
+  Checkbox,
+  Divider
 } from 'antd';
 
 import {
@@ -40,10 +40,10 @@ import {
   EyeOutlined,
   DeleteOutlined as DeleteIcon,
   FileExcelOutlined,
-  FilePdfOutlined, // <-- NUEVO
-  SaveOutlined,    // <-- NUEVO
-  LeftOutlined,    // <-- NUEVO
-  RightOutlined    // <-- NUEVO
+  FilePdfOutlined,
+  SaveOutlined,
+  LeftOutlined,
+  RightOutlined
 } from '@ant-design/icons';
 
 import { useParams, Link, useNavigate } from 'react-router-dom';
@@ -52,8 +52,11 @@ import dayjs from 'dayjs';
 import 'dayjs/locale/es';
 import utc from 'dayjs/plugin/utc';
 import timezone from 'dayjs/plugin/timezone';
-import * as XLSX from 'xlsx';          // (tu versión nueva de Excel)
+import * as XLSX from 'xlsx';
 
+// ► NUEVO: librerías para descargar todas las imágenes en ZIP
+import JSZip from 'jszip';
+import { saveAs } from 'file-saver';
 
 // IMPORTS DEL REPORTE
 import { PDFViewer } from '@react-pdf/renderer';
@@ -106,26 +109,61 @@ const parseFlexibleArray = (val) => {
   if (Array.isArray(val)) return val;
   if (typeof val === 'string') {
     const s = val.trim();
-    if (s.startsWith('[') && s.endsWith(']')) { try { const arr = JSON.parse(s); return Array.isArray(arr) ? arr : []; } catch { return []; } }
-    if (s.startsWith('{') && s.endsWith('}')) { const inner = s.slice(1, -1).trim(); if (!inner) return []; return inner.split(',').map((p) => p.trim().replace(/^"(.*)"$/, '$1').replace(/^'(.*)'$/, '$1')); }
+    if (s.startsWith('[') && s.endsWith(']')) {
+      try {
+        const arr = JSON.parse(s);
+        return Array.isArray(arr) ? arr : [];
+      } catch {
+        return [];
+      }
+    }
+    if (s.startsWith('{') && s.endsWith('}')) {
+      const inner = s.slice(1, -1).trim();
+      if (!inner) return [];
+      return inner
+        .split(',')
+        .map((p) =>
+          p
+            .trim()
+            .replace(/^"(.*)"$/, '$1')
+            .replace(/^'(.*)'$/, '$1')
+        );
+    }
     return s.split(',').map((p) => p.trim());
   }
   return [];
 };
 
-const formatHoraExactaUTC = (value) => { if (!value) return ''; const d = dayjs(value).utc(); return d.isValid() ? d.format('HH:mm') : String(value); };
-const formatFechaExactaUTC = (value) => { if (!value) return ''; const d = dayjs(value).utc(); return d.isValid() ? d.format('DD/MM/YYYY') : String(value); };
+const formatHoraExactaUTC = (value) => {
+  if (!value) return '';
+  const d = dayjs(value).utc();
+  return d.isValid() ? d.format('HH:mm') : String(value);
+};
+const formatFechaExactaUTC = (value) => {
+  if (!value) return '';
+  const d = dayjs(value).utc();
+  return d.isValid() ? d.format('DD/MM/YYYY') : String(value);
+};
 
 const renderLocation = (v) => {
   if (!v) return <Text type="secondary">N/A</Text>;
   if (typeof v === 'object') {
-    const lat = v.lat ?? v.latitude ?? ''; const lng = v.lng ?? v.longitude ?? '';
+    const lat = v.lat ?? v.latitude ?? '';
+    const lng = v.lng ?? v.longitude ?? '';
     if (lat !== '' || lng !== '') return <span>lat: {lat} {lng !== '' ? `, lng: ${lng}` : ''}</span>;
-    const e = v.easting ?? ''; const n = v.northing ?? ''; const z = v.utm_zone ?? '';
+    const e = v.easting ?? '';
+    const n = v.northing ?? '';
+    const z = v.utm_zone ?? '';
     if (e !== '' || n !== '' || z !== '') return <span>{`E: ${e}${n !== '' ? `, N: ${n}` : ''}${z ? `, Z: ${z}` : ''}`}</span>;
-    if (Array.isArray(v)) return v.join(', '); return JSON.stringify(v);
+    if (Array.isArray(v)) return v.join(', ');
+    return JSON.stringify(v);
   }
-  try { const parsed = JSON.parse(v); return renderLocation(parsed); } catch { return <span>{String(v)}</span>; }
+  try {
+    const parsed = JSON.parse(v);
+    return renderLocation(parsed);
+  } catch {
+    return <span>{String(v)}</span>;
+  }
 };
 
 // Helper para obtener array de imagenes limpio
@@ -308,7 +346,13 @@ const RuidoPage = () => {
   const fetchEquiposInfo = async (equipoIds) => {
     if (!equipoIds) return setEquiposInfo([]);
     let ids = equipoIds;
-    if (typeof ids === 'string') { try { ids = JSON.parse(ids); } catch { ids = []; } }
+    if (typeof ids === 'string') {
+      try {
+        ids = JSON.parse(ids);
+      } catch {
+        ids = [];
+      }
+    }
     if (!Array.isArray(ids) || !ids.length) return setEquiposInfo([]);
     try {
       const { data, error } = await supabase.from('equipos').select('id, nombre_equipo, modelo, serie').in('id', ids);
@@ -342,7 +386,11 @@ const RuidoPage = () => {
       const { data } = await supabase.from('profiles').select('id, username, nombre_completo, email').in('id', ids);
       const dict = {};
       (data || []).forEach((u) => {
-        const display = (u.nombre_completo && u.nombre_completo.trim()) || (u.username && u.username.trim()) || (u.email && u.email.trim()) || u.id;
+        const display =
+          (u.nombre_completo && u.nombre_completo.trim()) ||
+          (u.username && u.username.trim()) ||
+          (u.email && u.email.trim()) ||
+          u.id;
         dict[u.id] = display;
       });
       setUsersById(dict);
@@ -393,7 +441,11 @@ const RuidoPage = () => {
 
   useEffect(() => {
     fetchMediciones();
-    const channel = supabase.channel('rt-ruido-all').on('postgres_changes', { event: '*', schema: 'public', table: MEDICIONES_TABLE_NAME }, () => fetchMediciones(true)).subscribe();
+    const channel = supabase.channel('rt-ruido-all').on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: MEDICIONES_TABLE_NAME },
+      () => fetchMediciones(true)
+    ).subscribe();
     return () => { supabase.removeChannel(channel); };
   }, [monitoreoId, projectId]);
 
@@ -518,13 +570,32 @@ const RuidoPage = () => {
 
       // 2. Estilos
       const headerBg = 'D9D9D9';
-      const baseBorder = { top: { style: 'thin' }, bottom: { style: 'thin' }, left: { style: 'thin' }, right: { style: 'thin' } };
+      const baseBorder = {
+        top: { style: 'thin' },
+        bottom: { style: 'thin' },
+        left: { style: 'thin' },
+        right: { style: 'thin' }
+      };
 
-      const titleStyle = { font: { bold: true }, alignment: { vertical: 'center', horizontal: 'left' } };
-      const headerCenterStyle = { font: { bold: true }, alignment: { vertical: 'center', horizontal: 'center', wrapText: true }, fill: { fgColor: { rgb: headerBg } }, border: baseBorder };
+      const titleStyle = {
+        font: { bold: true },
+        alignment: { vertical: 'center', horizontal: 'left' }
+      };
+      const headerCenterStyle = {
+        font: { bold: true },
+        alignment: { vertical: 'center', horizontal: 'center', wrapText: true },
+        fill: { fgColor: { rgb: headerBg } },
+        border: baseBorder
+      };
 
-      const cellCenter = { alignment: { vertical: 'center', horizontal: 'center', wrapText: true }, border: baseBorder };
-      const cellLeft = { alignment: { vertical: 'center', horizontal: 'left', wrapText: true }, border: baseBorder };
+      const cellCenter = {
+        alignment: { vertical: 'center', horizontal: 'center', wrapText: true },
+        border: baseBorder
+      };
+      const cellLeft = {
+        alignment: { vertical: 'center', horizontal: 'left', wrapText: true },
+        border: baseBorder
+      };
 
       // 3. Datos de Cabecera (Metadatos)
       const headerInstalacion = proyectoInfo?.nombre || '';
@@ -541,13 +612,41 @@ const RuidoPage = () => {
       const wsData = [];
 
       // --- Encabezado del Reporte ---
-      wsData.push([{ v: 'PLANILLA DE MEDICIÓN Y EVALUACIÓN DE RUIDO', s: { font: { bold: true, sz: 14 }, alignment: { vertical: 'center', horizontal: 'center' } } }]);
+      wsData.push([
+        {
+          v: 'PLANILLA DE MEDICIÓN Y EVALUACIÓN DE RUIDO',
+          s: {
+            font: { bold: true, sz: 14 },
+            alignment: { vertical: 'center', horizontal: 'center' }
+          }
+        }
+      ]);
 
       // Filas de información del proyecto
-      wsData.push([{ v: 'NOMBRE DE LA EMPRESA', s: titleStyle }, { v: headerInstalacion, s: cellLeft }, { v: 'EQUIPO', s: titleStyle }, { v: headerEquipos, s: cellLeft }]);
-      wsData.push([{ v: 'FECHA DE INICIO', s: titleStyle }, { v: headerFechaInicio, s: cellLeft }, { v: 'MODELO DEL EQUIPO', s: titleStyle }, { v: headerModelos, s: cellLeft }]);
-      wsData.push([{ v: 'FECHA DE FINALIZACIÓN', s: titleStyle }, { v: '', s: cellLeft }, { v: 'SERIE DEL EQUIPO', s: titleStyle }, { v: headerSeries, s: cellLeft }]);
-      wsData.push([{ v: 'TIPO DE MONITOREO', s: titleStyle }, { v: monitoreoInfo?.tipo_monitoreo || 'Ruido', s: cellLeft }, { v: '', s: cellLeft }, { v: '', s: cellLeft }]);
+      wsData.push([
+        { v: 'NOMBRE DE LA EMPRESA', s: titleStyle },
+        { v: headerInstalacion, s: cellLeft },
+        { v: 'EQUIPO', s: titleStyle },
+        { v: headerEquipos, s: cellLeft }
+      ]);
+      wsData.push([
+        { v: 'FECHA DE INICIO', s: titleStyle },
+        { v: headerFechaInicio, s: cellLeft },
+        { v: 'MODELO DEL EQUIPO', s: titleStyle },
+        { v: headerModelos, s: cellLeft }
+      ]);
+      wsData.push([
+        { v: 'FECHA DE FINALIZACIÓN', s: titleStyle },
+        { v: '', s: cellLeft },
+        { v: 'SERIE DEL EQUIPO', s: titleStyle },
+        { v: headerSeries, s: cellLeft }
+      ]);
+      wsData.push([
+        { v: 'TIPO DE MONITOREO', s: titleStyle },
+        { v: monitoreoInfo?.tipo_monitoreo || 'Ruido', s: cellLeft },
+        { v: '', s: cellLeft },
+        { v: '', s: cellLeft }
+      ]);
       wsData.push(['']); // Espacio
 
       // --- Definición de Columnas (Headers) ---
@@ -764,11 +863,78 @@ const RuidoPage = () => {
   const firstMedicion = mediciones && mediciones.length > 0 ? mediciones[0] : null;
 
   const headerNombreEmpresa = proyectoInfo?.nombre || 'Cargando...';
-  const headerFechaInicio = firstMedicion?.measured_at ? formatFechaExactaUTC(firstMedicion.measured_at) : (proyectoInfo?.created_at ? dayjs(proyectoInfo.created_at).format('DD/MM/YYYY') : 'N/A');
+  const headerFechaInicio = firstMedicion?.measured_at
+    ? formatFechaExactaUTC(firstMedicion.measured_at)
+    : (proyectoInfo?.created_at ? dayjs(proyectoInfo.created_at).format('DD/MM/YYYY') : 'N/A');
   const headerFechaFin = '';
   const headerEquipos = safeEquipos.length ? safeEquipos.map((eq) => eq.nombre_equipo || 's/n').join(', ') : 'Ninguno';
   const headerModelos = safeEquipos.length ? safeEquipos.map((eq) => eq.modelo || 's/n').join(', ') : 'N/A';
   const headerSeries = safeEquipos.length ? safeEquipos.map((eq) => eq.serie || 's/n').join(', ') : 'N/A';
+
+  /* --------- DESCARGAR TODAS LAS IMÁGENES EN ZIP (NUEVO) --------- */
+  const downloadAllImages = async () => {
+    try {
+      // Reunir todas las URLs de todas las mediciones
+      const allUrls = [];
+      mediciones.forEach((r) => {
+        const imgs = getImagesArray(r);
+        imgs.forEach((u) => allUrls.push(u));
+      });
+
+      if (!allUrls.length) {
+        message.warning('No hay imágenes registradas en este monitoreo.');
+        return;
+      }
+
+      message.loading({
+        content: 'Preparando descarga de imágenes...',
+        key: 'zipRuido',
+        duration: 0
+      });
+
+      const uniqueUrls = Array.from(new Set(allUrls.filter(Boolean)));
+      const zip = new JSZip();
+      const folder = zip.folder('ruido');
+
+      const downloadPromises = uniqueUrls.map(async (url, index) => {
+        try {
+          const resp = await fetch(url);
+          if (!resp.ok) {
+            console.warn('No se pudo descargar', url);
+            return;
+          }
+          const blob = await resp.blob();
+          let fileName = url.split('/').pop() || `imagen_${index + 1}.jpg`;
+          fileName = fileName.split('?')[0];
+          folder.file(fileName, blob);
+        } catch (err) {
+          console.error('Error descargando', url, err);
+        }
+      });
+
+      await Promise.all(downloadPromises);
+      const content = await zip.generateAsync({ type: 'blob' });
+
+      const empresaSafe = (headerNombreEmpresa || 'empresa')
+        .replace(/[^\w\-]+/g, '_')
+        .substring(0, 40);
+      const fechaSafe = (headerFechaInicio || '').replace(/[^\d]/g, '');
+      const zipName = `ruido_imagenes_${empresaSafe}_${fechaSafe || 'monitoreo'}.zip`;
+
+      saveAs(content, zipName);
+
+      message.success({
+        content: 'Descarga lista.',
+        key: 'zipRuido'
+      });
+    } catch (err) {
+      console.error(err);
+      message.error({
+        content: 'No se pudieron descargar las imágenes.',
+        key: 'zipRuido'
+      });
+    }
+  };
 
   return (
     <>
@@ -779,21 +945,61 @@ const RuidoPage = () => {
       </Breadcrumb>
 
       <Row justify="space-between" align="middle" style={{ marginBottom: 8 }}>
-        <Col><Title level={2} style={{ color: PRIMARY_BLUE, marginBottom: 0 }}><LineChartOutlined /> Monitoreo de Ruido</Title></Col>
+        <Col>
+          <Title level={2} style={{ color: PRIMARY_BLUE, marginBottom: 0 }}>
+            <LineChartOutlined /> Monitoreo de Ruido
+          </Title>
+        </Col>
         <Col>
           <Space>
-            <Button onClick={() => navigate(`/proyectos/${projectId}/monitoreo`)}><ArrowLeftOutlined /> Volver a Monitoreos</Button>
-            <Button icon={<FileExcelOutlined />} onClick={exportToExcel}>Exportar a Excel</Button>
-            <Button icon={<FilePdfOutlined />} onClick={handleOpenPdf} style={{ backgroundColor: '#ff4d4f', color: 'white', borderColor: '#ff4d4f' }}>Reporte Fotos</Button>
-            <Button type="primary" icon={<PlusOutlined />} onClick={handleAdd}>Agregar Medición</Button>
+            <Button onClick={() => navigate(`/proyectos/${projectId}/monitoreo`)}>
+              <ArrowLeftOutlined /> Volver a Monitoreos
+            </Button>
+            {/* NUEVO: botón para descargar todas las imágenes en ZIP */}
+            <Button onClick={downloadAllImages}>
+              Descargar Imágenes
+            </Button>
+            <Button icon={<FileExcelOutlined />} onClick={exportToExcel}>
+              Exportar a Excel
+            </Button>
+            <Button
+              icon={<FilePdfOutlined />}
+              onClick={handleOpenPdf}
+              style={{ backgroundColor: '#ff4d4f', color: 'white', borderColor: '#ff4d4f' }}
+            >
+              Reporte Fotos
+            </Button>
+            <Button type="primary" icon={<PlusOutlined />} onClick={handleAdd}>
+              Agregar Medición
+            </Button>
           </Space>
         </Col>
       </Row>
 
       <Row justify="space-between" align="middle" style={{ marginBottom: 16, gap: 15 }}>
-        <Col flex="0 0 590px"><Input.Search allowClear placeholder="Buscar..." value={searchText} onChange={(e) => { setSearchText(e.target.value); setCurrentPage(1); }} /></Col>
+        <Col flex="0 0 590px">
+          <Input.Search
+            allowClear
+            placeholder="Buscar..."
+            value={searchText}
+            onChange={(e) => { setSearchText(e.target.value); setCurrentPage(1); }}
+          />
+        </Col>
         <Col>
-          <Space><Text type="secondary">Ver:</Text><Select value={pageSize} onChange={(val) => { setPageSize(val); setCurrentPage(1); }} style={{ width: 90 }}><Option value={5}>5</Option><Option value={10}>10</Option><Option value={20}>20</Option><Option value={50}>50</Option></Select><Text type="secondary">registros</Text></Space>
+          <Space>
+            <Text type="secondary">Ver:</Text>
+            <Select
+              value={pageSize}
+              onChange={(val) => { setPageSize(val); setCurrentPage(1); }}
+              style={{ width: 90 }}
+            >
+              <Option value={5}>5</Option>
+              <Option value={10}>10</Option>
+              <Option value={20}>20</Option>
+              <Option value={50}>50</Option>
+            </Select>
+            <Text type="secondary">registros</Text>
+          </Space>
         </Col>
       </Row>
 
@@ -810,23 +1016,58 @@ const RuidoPage = () => {
 
       <Spin spinning={loading}>
         <div style={{ overflowX: 'auto' }}>
-          <Table size="small" columns={columns} dataSource={paginatedMediciones} rowKey="id" pagination={false} scroll={{ x: 1600 }} />
+          <Table
+            size="small"
+            columns={columns}
+            dataSource={paginatedMediciones}
+            rowKey="id"
+            pagination={false}
+            scroll={{ x: 1600 }}
+          />
         </div>
       </Spin>
 
       <Row justify="space-between" align="middle" style={{ marginTop: 12 }}>
-        <Col>{(() => { const mostrados = Math.min(currentPage * pageSize, totalFiltered); return <Text type="secondary">Registros {mostrados} de {totalFiltered}</Text>; })()}</Col>
-        <Col><Pagination current={currentPage} pageSize={pageSize} total={totalFiltered} onChange={(p) => setCurrentPage(p)} size="small" showSizeChanger={false} /></Col>
+        <Col>
+          {(() => {
+            const mostrados = Math.min(currentPage * pageSize, totalFiltered);
+            return <Text type="secondary">Registros {mostrados} de {totalFiltered}</Text>;
+          })()}
+        </Col>
+        <Col>
+          <Pagination
+            current={currentPage}
+            pageSize={pageSize}
+            total={totalFiltered}
+            onChange={(p) => setCurrentPage(p)}
+            size="small"
+            showSizeChanger={false}
+          />
+        </Col>
       </Row>
 
       {/* MODAL FORM */}
-      <Modal title={selectedMedicion ? 'Editar Medición' : 'Agregar Medición'} open={isFormModalVisible} onOk={handleFormOk} onCancel={() => setIsFormModalVisible(false)} confirmLoading={saving} destroyOnClose width={650}>
-        <Form form={form} layout="vertical" name="medicionRuidoForm" key={selectedMedicion ? `edit-${selectedMedicion.id}` : 'add-ruido'}
+      <Modal
+        title={selectedMedicion ? 'Editar Medición' : 'Agregar Medición'}
+        open={isFormModalVisible}
+        onOk={handleFormOk}
+        onCancel={() => setIsFormModalVisible(false)}
+        confirmLoading={saving}
+        destroyOnClose
+        width={650}
+      >
+        <Form
+          form={form}
+          layout="vertical"
+          name="medicionRuidoForm"
+          key={selectedMedicion ? `edit-${selectedMedicion.id}` : 'add-ruido'}
           initialValues={
             selectedMedicion ? (() => {
               let timeVal = null;
               if (selectedMedicion.measured_at) {
-                const raw = String(selectedMedicion.measured_at); const hhmm = raw.slice(11, 16); const [hh, mm] = hhmm.split(':');
+                const raw = String(selectedMedicion.measured_at);
+                const hhmm = raw.slice(11, 16);
+                const [hh, mm] = hhmm.split(':');
                 timeVal = dayjs().hour(Number(hh)).minute(Number(mm));
               }
               return {
@@ -848,85 +1089,341 @@ const RuidoPage = () => {
           preserve={false}
         >
           {/* CAMPO ÁREA PRIMERO */}
-          <Form.Item name="area" label="Área" rules={[{ required: true }]}><Input placeholder="Ej: Planta baja" /></Form.Item>
+          <Form.Item
+            name="area"
+            label="Área"
+            rules={[{ required: true }]}
+          >
+            <Input placeholder="Ej: Planta baja" />
+          </Form.Item>
 
-          {/* HORA SEGUNDO (Opcional según tu gusto, pero pediste Área antes que Punto) */}
-          <Form.Item name="horario_medicion" label="Horario de Medición" rules={[{ required: true }]}>
+          {/* HORA SEGUNDO */}
+          <Form.Item
+            name="horario_medicion"
+            label="Horario de Medición"
+            rules={[{ required: true }]}
+          >
             <Space.Compact style={{ width: '100%' }}>
               <TimePicker format="HH:mm" style={{ flex: 1 }} />
-              <Tooltip title="Usar hora actual"><Button icon={<ClockCircleOutlined />} onClick={() => form.setFieldsValue({ horario_medicion: dayjs() })} /></Tooltip>
+              <Tooltip title="Usar hora actual">
+                <Button
+                  icon={<ClockCircleOutlined />}
+                  onClick={() => form.setFieldsValue({ horario_medicion: dayjs() })}
+                />
+              </Tooltip>
             </Space.Compact>
           </Form.Item>
 
-          <Form.Item name="punto_medicion" label="Punto de Medición" rules={[{ required: true }]}><Input placeholder="Ej: Puesto de trabajo" /></Form.Item>
+          <Form.Item
+            name="punto_medicion"
+            label="Punto de Medición"
+            rules={[{ required: true }]}
+          >
+            <Input placeholder="Ej: Puesto de trabajo" />
+          </Form.Item>
 
           <Row gutter={12}>
-            <Col span={8}><Form.Item name="tiempo_expos_h" label="Tiempo Exposición (h)" rules={[{ required: true }]}><InputNumber min={0} step={0.1} style={{ width: '100%' }} placeholder="Ej: 8" /></Form.Item></Col>
-            <Col span={8}><Form.Item name="ponderacion" label="Ponderación" rules={[{ required: true }]}><Select><Option value="A">A</Option><Option value="C">C</Option><Option value="Z">Z</Option></Select></Form.Item></Col>
-            <Col span={8}><Form.Item name="respuesta" label="Respuesta" rules={[{ required: true }]}><Select><Option value="Rápido">Rápido</Option><Option value="Lento">Lento</Option><Option value="Impulso">Impulso</Option></Select></Form.Item></Col>
+            <Col span={8}>
+              <Form.Item
+                name="tiempo_expos_h"
+                label="Tiempo Exposición (h)"
+                rules={[{ required: true }]}
+              >
+                <InputNumber
+                  min={0}
+                  step={0.1}
+                  style={{ width: '100%' }}
+                  placeholder="Ej: 8"
+                />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item
+                name="ponderacion"
+                label="Ponderación"
+                rules={[{ required: true }]}
+              >
+                <Select>
+                  <Option value="A">A</Option>
+                  <Option value="C">C</Option>
+                  <Option value="Z">Z</Option>
+                </Select>
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item
+                name="respuesta"
+                label="Respuesta"
+                rules={[{ required: true }]}
+              >
+                <Select>
+                  <Option value="Rápido">Rápido</Option>
+                  <Option value="Lento">Lento</Option>
+                  <Option value="Impulso">Impulso</Option>
+                </Select>
+              </Form.Item>
+            </Col>
           </Row>
 
-          {/* ... RESTO DEL FORMULARIO (lecturas, protectores, imagenes, ubicacion) ... */}
-          <Form.List name="lecturas_db" rules={[{ validator: async (_, lecturas) => { if (!lecturas || lecturas.filter((l) => l != null).length === 0) return Promise.reject(new Error('Agrega al menos una lectura')); } }]}>
+          <Form.List
+            name="lecturas_db"
+            rules={[
+              {
+                validator: async (_, lecturas) => {
+                  if (!lecturas || lecturas.filter((l) => l != null).length === 0)
+                    return Promise.reject(new Error('Agrega al menos una lectura'));
+                }
+              }
+            ]}
+          >
             {(fields, { add, remove }, { errors }) => (
               <>
                 <Text strong>Lecturas (dB)</Text>
                 {fields.map(({ key, name, ...rest }) => (
                   <Space key={key} style={{ display: 'flex', marginBottom: 8 }} align="baseline">
-                    <Form.Item {...rest} name={name} rules={[{ required: true, message: 'Falta valor' }]}><InputNumber min={0} placeholder="Ej: 85" style={{ width: '100%' }} /></Form.Item>
+                    <Form.Item
+                      {...rest}
+                      name={name}
+                      rules={[{ required: true, message: 'Falta valor' }]}
+                    >
+                      <InputNumber
+                        min={0}
+                        placeholder="Ej: 85"
+                        style={{ width: '100%' }}
+                      />
+                    </Form.Item>
                     <DeleteIcon onClick={() => remove(name)} style={{ cursor: 'pointer' }} />
                   </Space>
                 ))}
-                <Form.Item><Button type="dashed" onClick={() => add()} block icon={<PlusOutlined />}>Añadir Lectura</Button><Form.ErrorList errors={errors} /></Form.Item>
+                <Form.Item>
+                  <Button type="dashed" onClick={() => add()} block icon={<PlusOutlined />}>
+                    Añadir Lectura
+                  </Button>
+                  <Form.ErrorList errors={errors} />
+                </Form.Item>
               </>
             )}
           </Form.List>
-          <Row gutter={12}><Col span={8}><Form.Item name="uso_protectores" label="Uso de Protectores" valuePropName="checked"><Switch checkedChildren="Sí" unCheckedChildren="No" /></Form.Item></Col><Col span={16}><Form.Item name="tipo_protector" label="Tipo de Protector"><Input placeholder="Ej: Orejeras Pasivas" /></Form.Item></Col></Row>
-          <Form.Item name="image_urls" label="URLs de imágenes"><Input.TextArea rows={2} /></Form.Item>
-          <Form.Item name="location" label="Ubicación"><Input /></Form.Item>
-          <Form.Item name="observaciones" label="Observaciones"><Input.TextArea rows={2} /></Form.Item>
+
+          <Row gutter={12}>
+            <Col span={8}>
+              <Form.Item
+                name="uso_protectores"
+                label="Uso de Protectores"
+                valuePropName="checked"
+              >
+                <Switch checkedChildren="Sí" unCheckedChildren="No" />
+              </Form.Item>
+            </Col>
+            <Col span={16}>
+              <Form.Item
+                name="tipo_protector"
+                label="Tipo de Protector"
+              >
+                <Input placeholder="Ej: Orejeras Pasivas" />
+              </Form.Item>
+            </Col>
+          </Row>
+
+          <Form.Item
+            name="image_urls"
+            label="URLs de imágenes"
+          >
+            <Input.TextArea rows={2} />
+          </Form.Item>
+
+          <Form.Item
+            name="location"
+            label="Ubicación"
+          >
+            <Input />
+          </Form.Item>
+
+          <Form.Item
+            name="observaciones"
+            label="Observaciones"
+          >
+            <Input.TextArea rows={2} />
+          </Form.Item>
         </Form>
       </Modal>
 
-      <Modal open={imageViewerOpen} onCancel={() => setImageViewerOpen(false)} footer={imageViewerList.length > 1 ? [<Button key="prev" onClick={() => setImageViewerIndex((prev) => (prev - 1 + imageViewerList.length) % imageViewerList.length)}>Anterior</Button>, <Button key="next" type="primary" onClick={() => setImageViewerIndex((prev) => (prev + 1) % imageViewerList.length)}>Siguiente</Button>,] : null} width={720} title="Imagen de la medición">
-        {imageViewerList.length ? (<div style={{ textAlign: 'center' }}><img src={imageViewerList[imageViewerIndex]} alt="ruido" style={{ maxWidth: '100%', maxHeight: '60vh', objectFit: 'contain' }} /><div style={{ marginTop: 8 }}>{imageViewerIndex + 1} / {imageViewerList.length}</div></div>) : (<Text type="secondary">Sin imagen.</Text>)}
+      <Modal
+        open={imageViewerOpen}
+        onCancel={() => setImageViewerOpen(false)}
+        footer={imageViewerList.length > 1 ? [
+          <Button
+            key="prev"
+            onClick={() =>
+              setImageViewerIndex((prev) => (prev - 1 + imageViewerList.length) % imageViewerList.length)
+            }
+          >
+            Anterior
+          </Button>,
+          <Button
+            key="next"
+            type="primary"
+            onClick={() =>
+              setImageViewerIndex((prev) => (prev + 1) % imageViewerList.length)
+            }
+          >
+            Siguiente
+          </Button>,
+        ] : null}
+        width={720}
+        title="Imagen de la medición"
+      >
+        {imageViewerList.length ? (
+          <div style={{ textAlign: 'center' }}>
+            <img
+              src={imageViewerList[imageViewerIndex]}
+              alt="ruido"
+              style={{ maxWidth: '100%', maxHeight: '60vh', objectFit: 'contain' }}
+            />
+            <div style={{ marginTop: 8 }}>
+              {imageViewerIndex + 1} / {imageViewerList.length}
+            </div>
+          </div>
+        ) : (
+          <Text type="secondary">Sin imagen.</Text>
+        )}
       </Modal>
 
       {/* === MODAL DE PDF === */}
-      <Modal title={pdfStep === 'selection' ? "Seleccionar Imágenes" : "Vista Previa PDF"} open={isPdfModalVisible} onCancel={() => setIsPdfModalVisible(false)} width={1000} style={{ top: 20 }}
+      <Modal
+        title={pdfStep === 'selection' ? "Seleccionar Imágenes" : "Vista Previa PDF"}
+        open={isPdfModalVisible}
+        onCancel={() => setIsPdfModalVisible(false)}
+        width={1000}
+        style={{ top: 20 }}
         footer={pdfStep === 'selection' ? (
           <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', alignItems: 'center' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <Text strong>Distribución:</Text>
-              <Select defaultValue="2x4" style={{ width: 120 }} onChange={setPdfLayout}>
-                <Option value="2x4">2 x 4</Option><Option value="2x3">2 x 3</Option><Option value="3x3">3 x 3</Option><Option value="3x4">3 x 4</Option>
+              <Select
+                defaultValue="2x4"
+                style={{ width: 120 }}
+                onChange={setPdfLayout}
+              >
+                <Option value="2x4">2 x 4</Option>
+                <Option value="2x3">2 x 3</Option>
+                <Option value="3x3">3 x 3</Option>
+                <Option value="3x4">3 x 4</Option>
               </Select>
             </div>
-            <Button type="primary" icon={<SaveOutlined />} onClick={handleSaveAndGenerate} loading={isSavingSelection}>Guardar y Generar PDF</Button>
+            <Button
+              type="primary"
+              icon={<SaveOutlined />}
+              onClick={handleSaveAndGenerate}
+              loading={isSavingSelection}
+            >
+              Guardar y Generar PDF
+            </Button>
           </div>
-        ) : (<Button onClick={() => setPdfStep('selection')}><ArrowLeftOutlined /> Volver</Button>)}
+        ) : (
+          <Button onClick={() => setPdfStep('selection')}>
+            <ArrowLeftOutlined /> Volver
+          </Button>
+        )}
       >
         <div style={{ height: '75vh', overflowY: 'auto', overflowX: 'hidden' }}>
           {pdfStep === 'selection' && (
             <>
-              <div style={{ marginBottom: 16, paddingBottom: 16, borderBottom: '1px solid #f0f0f0', display: 'flex', justifyContent: 'center', gap: 16 }}>
+              <div
+                style={{
+                  marginBottom: 16,
+                  paddingBottom: 16,
+                  borderBottom: '1px solid #f0f0f0',
+                  display: 'flex',
+                  justifyContent: 'center',
+                  gap: 16
+                }}
+              >
                 <Button size="small" onClick={handleSelectAllRecords}>Seleccionar Todos</Button>
                 <Button size="small" onClick={handleDeselectAllRecords}>Deseleccionar Todos</Button>
               </div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', justifyContent: 'center' }}>
+              <div
+                style={{
+                  display: 'flex',
+                  flexWrap: 'wrap',
+                  gap: '10px',
+                  justifyContent: 'center'
+                }}
+              >
                 {mediciones.filter(r => getImagesArray(r).length > 0).map((r) => {
                   const imgs = getImagesArray(r);
                   const currentIdx = tempSelections[r.id] || 0;
                   const isSelected = recordSelections[r.id] === true;
                   return (
-                    <div key={r.id} style={{ width: '23%', border: isSelected ? '1px solid #ddd' : '1px dashed #999', opacity: isSelected ? 1 : 0.5, padding: '8px', borderRadius: '8px', display: 'flex', flexDirection: 'column', alignItems: 'center', backgroundColor: '#fafafa', position: 'relative' }}>
-                      <Checkbox checked={isSelected} onChange={() => handleRecordSelectionToggle(r.id)} style={{ position: 'absolute', top: 5, right: 5, zIndex: 20 }} />
+                    <div
+                      key={r.id}
+                      style={{
+                        width: '23%',
+                        border: isSelected ? '1px solid #ddd' : '1px dashed #999',
+                        opacity: isSelected ? 1 : 0.5,
+                        padding: '8px',
+                        borderRadius: '8px',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                        backgroundColor: '#fafafa',
+                        position: 'relative'
+                      }}
+                    >
+                      <Checkbox
+                        checked={isSelected}
+                        onChange={() => handleRecordSelectionToggle(r.id)}
+                        style={{ position: 'absolute', top: 5, right: 5, zIndex: 20 }}
+                      />
                       <Text strong style={{ fontSize: 12 }}>{monitoreoInfo?.tipo_monitoreo}</Text>
-                      <div style={{ position: 'relative', width: '100%', height: '150px', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff', border: '1px solid #eee', marginTop: 5 }}>
-                        {imgs.length > 1 && <Button shape="circle" icon={<LeftOutlined />} size="small" style={{ position: 'absolute', left: 5 }} onClick={() => handlePrevImage(r.id, imgs.length)} />}
-                        <img src={imgs[currentIdx]} style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
-                        {imgs.length > 1 && <Button shape="circle" icon={<RightOutlined />} size="small" style={{ position: 'absolute', right: 5 }} onClick={() => handleNextImage(r.id, imgs.length)} />}
-                        {imgs.length > 1 && <span style={{ position: 'absolute', bottom: 2, right: 5, fontSize: 10, background: 'rgba(255,255,255,0.7)' }}>{currentIdx + 1}/{imgs.length}</span>}
+                      <div
+                        style={{
+                          position: 'relative',
+                          width: '100%',
+                          height: '150px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          backgroundColor: '#fff',
+                          border: '1px solid #eee',
+                          marginTop: 5
+                        }}
+                      >
+                        {imgs.length > 1 && (
+                          <Button
+                            shape="circle"
+                            icon={<LeftOutlined />}
+                            size="small"
+                            style={{ position: 'absolute', left: 5 }}
+                            onClick={() => handlePrevImage(r.id, imgs.length)}
+                          />
+                        )}
+                        <img
+                          src={imgs[currentIdx]}
+                          style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
+                        />
+                        {imgs.length > 1 && (
+                          <Button
+                            shape="circle"
+                            icon={<RightOutlined />}
+                            size="small"
+                            style={{ position: 'absolute', right: 5 }}
+                            onClick={() => handleNextImage(r.id, imgs.length)}
+                          />
+                        )}
+                        {imgs.length > 1 && (
+                          <span
+                            style={{
+                              position: 'absolute',
+                              bottom: 2,
+                              right: 5,
+                              fontSize: 10,
+                              background: 'rgba(255,255,255,0.7)'
+                            }}
+                          >
+                            {currentIdx + 1}/{imgs.length}
+                          </span>
+                        )}
                       </div>
                       <Text style={{ fontSize: 11, marginTop: 5 }}>{r.punto_medicion}</Text>
                     </div>
