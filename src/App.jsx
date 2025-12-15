@@ -27,10 +27,13 @@ import ParticulasPage from './pages/ParticulasPage.jsx';
 import GasesPage from './pages/GasesPage.jsx';
 import RuidoPage from './pages/RuidoPage.jsx';
 import EstresFrioPage from './pages/EstresFrioPage.jsx';
-import EstresCalorPage from './pages/EstresCalorPage.jsx';
+//import EstresCalorPage from './pages/EstresCalorPage.jsx';
 import VibracionPage from './pages/VibracionPage.jsx';
 import ErgonomiaPage from './pages/ErgonomiaPage.jsx';
 import DosimetriaPage from './pages/DosimetriaPage.jsx';
+
+// Routes
+import EstresCalorRoute from './pages/EstresCalorRoute.jsx';
 
 const ProyectoDetailPage = () => {
   const { projectId } = useParams();
@@ -180,14 +183,27 @@ function App() {
                 </RequirePermission>
               }
             />
-            <Route
+
+            {/*este codigo esta comentado porque tiene codigo refactorizado*/}
+            
+            {/*<Route
               path="proyectos/:projectId/monitoreo/:monitoreoId/estres-calor"
               element={
                 <RequirePermission perm="monitors:read">
                   <EstresCalorPage />
                 </RequirePermission>
               }
+            />*/}
+{/*codigo refactorizado*/}
+            <Route
+              path="proyectos/:projectId/monitoreo/:monitoreoId/estres-calor"
+              element={
+                <RequirePermission perm="monitors:read">
+                  <EstresCalorRoute />
+                </RequirePermission>
+              }
             />
+
             <Route
               path="proyectos/:projectId/monitoreo/:monitoreoId/vibracion"
               element={

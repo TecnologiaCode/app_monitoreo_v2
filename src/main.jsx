@@ -19,6 +19,7 @@ import './index.css';
 
 import 'antd/dist/reset.css'; // ✅ Limpia estilos base de AntD v5
 
+
 // Parche para React 19 + Ant Design v5
 import '@ant-design/v5-patch-for-react-19';
 

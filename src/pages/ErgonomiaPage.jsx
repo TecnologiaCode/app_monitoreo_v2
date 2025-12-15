@@ -1373,7 +1373,8 @@ const ErgonomiaPage = () => {
                 onOk={onOkForm}
                 onCancel={onCancelForm}
                 confirmLoading={saving}
-                destroyOnClose
+                //destroyOnClose
+                destroyOnHidden
                 width={900}
             >
                 <Form
